@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pillow>=10.4
+pyftpdlib>=2.0
+requests>=2.32
+anthropic>=0.40

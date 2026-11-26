@@ -1,0 +1,18 @@
+{
+  "canvas": [1600, 1600],
+  "border": 36,
+  "border_color": "#1b1b3a",
+  "background": "#ffffff",
+  "footer_height": 150,
+  "footer_color": "#1b1b3a",
+  "footer_text": "Your auction name",
+  "footer_text_color": "#ffffff",
+  "show_item_ref": true,
+  "logo": "logo.png",
+  "logo_width": 0.18,
+  "logo_margin": 40,
+  "logo_position": "top-left",
+  "overlay": "overlay.png",
+  "font": "",
+  "crop": {"mode": "auto", "padding": 0.12, "threshold": 28}
+}

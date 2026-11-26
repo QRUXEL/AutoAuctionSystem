@@ -1,0 +1,132 @@
+# Auction station
+
+One button press photographs an item from four sides, films one full turn, and
+puts a framed, AI-described listing in a review queue. A person checks it and
+publishes it to Tradera with one tap.
+
+## How it fits together
+
+```
+                    +--Bluetooth--> [edelkrone HeadONE turntable]
+[Button + ESP32-S3] |
+                    +--Bluetooth--> [Sony A7 IV] --Wi-Fi FTP--> [Server on local Coolify]
+        |                                                         crop + frame -> AI text
+        +------------------Wi-Fi (open item / done)------------>  -> review page -> Tradera
+```
+
+No computer is needed at the photo table. The ESP32-S3 runs the whole capture and
+holds both Bluetooth links.
+
+| Part | Folder | Runs on | Job |
+|---|---|---|---|
+| Station controller | `firmware/` | ESP32-S3 | Button; drives the HeadONE; fires the camera's shutter and movie button; tells the server when an item starts and ends |
+| Server | `server/` | Local Coolify | Receives the camera's files, crops and frames them, drafts the text, hosts the review page, publishes to Tradera |
+| Test tools | `tools/` | anywhere | Fake camera and mock Tradera for rehearsing without hardware |
+| PC agent (optional) | `station/` | a PC | The same sequence using edelkrone's own Python SDK; a fallback if the ESP32's turntable link misbehaves |
+
+The HeadONE code in `firmware/src/edelkrone_proto.h` is ported from edelkrone's
+MIT-licensed Python SDK 0.1.4. `firmware/test/` rebuilds every packet with the SDK
+itself and compares them byte for byte.
+
+## What has and has not been tested
+
+| Piece | State |
+|---|---|
+| Server: FTP intake, grouping files into items, crop, frame, review API, publish flow | Run end to end with the fake camera and the mock Tradera |
+| HeadONE packets (status, position, joystick, stop, layout setup, shutter, numeric move) | Identical to edelkrone's SDK output; replies parsed identically |
+| ESP32-S3 firmware as a whole | **Not compiled and not run** (no ESP32 toolchain here) |
+| HeadONE connection flow and turn accuracy | **Not run on a HeadONE** |
+| Sony Bluetooth remote | **Not run**; community-documented protocol |
+| Tradera client | Written from Tradera's OpenAPI spec and run against the mock; **not run against the real API** |
+| AI description | Code path present; **not run** (no API key in the build environment) |
+| Review page | Script syntax-checked; **not opened in a browser** |
+
+## First test on the real hardware
+
+Flash, open the serial monitor, and use the ESP32's HTTP API (its address is printed at boot):
+
+1. `GET /status`: `table` and `camera` should both be `true`. If not, `table_note` / `camera_note` say why.
+   `table_mtu` should be well above 100 and `table_bad_frames` should stay at 0; if frames are bad, the MTU is the suspect.
+2. `POST /table/jog?deg=90` four times: the table should end where it started. Tune `STOP_EARLY_DEG`, `PHOTO_TURN_SPEED`
+   and, if the turntable kit is geared, `HEAD_DEG_PER_TABLE_DEG` in `config.h`. Flip `TABLE_CLOCKWISE` if needed.
+3. Optional: `POST /table/numeric?deg=90`, then `GET /status` and read `last`. It shows the angle before and after.
+   If the head moves smoothly to the commanded angle, the planned move could replace the joystick loop later.
+4. `POST /camera/shutter` and `POST /camera/record` (twice) to check the camera link.
+5. Press the button for a full run, and watch the review page.
+
+Check also:
+- **Movies over FTP.** Confirm the A7 IV transfers the movie automatically like the stills. If not, the listing still completes and the clip stays on the card.
+- **Bluetooth remote and Wi-Fi FTP together.** If the camera drops FTP while `Bluetooth Rmt Ctrl` is on, cable the camera to the HeadONE's camera port and set `SHUTTER_VIA_HEAD 1` (stills then go through the head; the video still needs Bluetooth).
+- **Movie in stills mode.** The record command acts like the MOVIE button, so the dial can stay on stills.
+
+## Setup
+
+### 1. Tradera access
+Tradera's API has no drafts: a listing is either uncommitted (invisible) or live. The review page is the draft stage.
+
+1. Register a developer account and an application at https://api.tradera.com/register.
+2. Get a user token for the selling account (Tradera's token login flow, see their Authorization docs).
+3. Put app id, app key, user id and token in the server's environment.
+4. Fill `shipping_options` and other defaults in `/data/settings.json` (keys are listed in `server/app/config.py`). Shipping ids come from `GET /v4/reference-data/shipping-options`.
+5. Leave `TRADERA_DRY_RUN=1` until a dry run looks right: Publish then only writes `tradera_payload.json` next to the photos.
+
+Tradera's API takes images only, so the spin video is kept on the server (viewable and downloadable from the review page) but is not attached to the listing.
+
+### 2. Server (Coolify)
+1. Copy `server/.env.example` to `.env` and fill it in. `FTP_PUBLIC_HOST` must be the LAN address the camera uses to reach the server.
+2. Deploy `server/` as a Docker Compose resource. Give port 8080 a domain; ports 2121 and 30000-30009 are published directly for FTP.
+3. Replace `logo.png` and edit `frame.json` in the `station-branding` volume. Drop in an `overlay.png` (transparent, 1600×1600) for a designer-made frame.
+
+### 3. Camera (A7 IV)
+- File format JPEG (HEIF and RAW are ignored by the server).
+- Network > FTP Transfer: server address, port 2121, passive mode, the FTP user and password; automatic transfer on.
+- Network > Bluetooth: function on, `Bluetooth Rmt Ctrl` on; choose Pairing the first time the ESP32 starts.
+- Fixed exposure, focus and white balance so all four sides match.
+
+### 4. HeadONE
+Update its firmware with the edelkrone app, mount it upright (pan) on the turntable kit, and close the app so it does not hold the Bluetooth link.
+
+### 5. ESP32-S3
+Copy `firmware/include/secrets.example.h` to `secrets.h` and fill in the Wi-Fi password, `OTA_PASSWORD` and `STATION_KEY`
+(this file is not in git). Put the same OTA password after `--auth=` in `platformio.ini`.
+Edit `firmware/include/config.h` for the server's LAN address, pins and sequence timing.
+
+**First flash, building on one computer and flashing from another:**
+1. Build: in `firmware/`, run `pio run -e esp32s3`. It writes `.pio/build/esp32s3/auction-station-full.bin`.
+2. On the computer with the ESP32-S3 plugged in, open https://espressif.github.io/esptool-js/ in Chrome or Edge,
+   Connect, pick the board's port, add `auction-station-full.bin` at offset `0x0`, Program.
+   (If the board won't connect, hold BOOT while plugging it in.)
+   If the merged file is missing, flash these four instead: `0x0` bootloader.bin, `0x8000` partitions.bin,
+   `0xe000` boot_app0.bin (in `~/.platformio/packages/framework-arduinoespressif32/tools/partitions/`), `0x10000` firmware.bin.
+3. Press RESET. It joins Wi-Fi as `auction-station` and is at http://auction-station.local (or the IP your router shows).
+
+**Updates over Wi-Fi after that**, any of:
+- Browser: http://auction-station.local/update, user `admin`, the OTA password, upload `.pio/build/esp32s3/firmware.bin`.
+- curl: `curl -u admin:PASS -F firmware=@.pio/build/esp32s3/firmware.bin http://auction-station.local/update`
+- PlatformIO on the same network: `pio run -e ota -t upload`
+
+An update stops a running capture and the table first. Use `firmware.bin` (not the merged file) for updates.
+
+Directly over USB on the same computer: `pio run -e esp32s3 -t upload && pio device monitor`.
+The LED shows the state: red = nothing connected, yellow = one device, green = ready, blue = running, flashing red = last run failed.
+Pressing the button during a run stops it.
+
+### Packet test (optional, on any PC)
+```
+g++ -std=c++17 -o proto_test firmware/test/proto_test.cpp
+pip install edelkrone && python firmware/test/compare_with_sdk.py ./proto_test
+```
+
+## Rehearsal without hardware
+```
+python tools/mock_tradera.py 9099
+cd server && DATA_DIR=./data STATION_KEY=k TRADERA_BASE=http://127.0.0.1:9099 TRADERA_DRY_RUN=0 \
+  TRADERA_APP_ID=1 TRADERA_APP_KEY=k TRADERA_USER_ID=2 TRADERA_USER_TOKEN=t uvicorn app.main:app --port 8080
+python station/agent.py --simulate           # stands in for the ESP32; [server] url = http://127.0.0.1:8080, same key
+curl -X POST http://127.0.0.1:8765/trigger   # the "button"
+python tools/fake_camera.py                  # the "camera"
+```
+Then open http://127.0.0.1:8080.
+
+## How files become items
+The controller opens an item just before shooting. Photos go to the oldest item still short of photos; a video goes to the oldest recent item without one. If a photo never arrives, the item is processed anyway after `GRACE_SECONDS` and flagged. If the server can't be reached when a run starts, the photos still arrive and become a "manual" item, so nothing is lost.

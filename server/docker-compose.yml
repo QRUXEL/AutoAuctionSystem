@@ -1,0 +1,24 @@
+# Deploy on the local Coolify server as a Docker Compose resource.
+# Give the "web" port (8080) a domain in Coolify; the FTP ports are published
+# straight on the host because the camera talks plain FTP, not HTTP.
+services:
+  station:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+      - "2121:2121"
+      - "30000-30009:30000-30009"
+    volumes:
+      - station-data:/data
+      - station-branding:/branding
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  station-data:
+  station-branding:

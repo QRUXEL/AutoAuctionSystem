@@ -1,0 +1,25 @@
+listen_port = 8765            # the ESP32 button posts to http://<this PC>:8765/trigger
+
+[server]
+url = "http://192.168.1.50:8080"   # the app on the local Coolify server
+station_key = "same value as STATION_KEY on the server"
+
+[camera]
+esp32_url = "http://192.168.1.60"  # the ESP32 (it prints its address on the serial port)
+
+[turntable]
+name = "HeadONE"              # as shown in the computer's Bluetooth list; or set mac instead
+mac = ""
+clockwise = true
+slow_zone_deg = 12            # start slowing down this many degrees before the target
+min_speed = 0.06
+stop_early_deg = 0.4          # raise if the table overshoots, lower if it stops short
+
+[sequence]
+photos = 4
+video = true
+settle_before_photo = 0.6     # seconds for the item to stop wobbling
+wait_after_photo = 1.2        # exposure + write time before the table moves again
+photo_turn_speed = 0.5        # fraction of the head's top speed
+video_turn_speed = 0.25
+video_lead_seconds = 1.0      # still footage before and after the spin
