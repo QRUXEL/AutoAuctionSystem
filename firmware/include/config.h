@@ -12,7 +12,7 @@
 #define HOSTNAME       "auction-station"   // also reachable as http://auction-station.local
 
 // The auction server on the local Coolify (use its LAN address and port, plain http)
-#define SERVER_URL     "http://192.168.1.50:8080"
+#define SERVER_URL     "http://10.8.0.247:8095"
 
 // ---- pins (ESP32-S3-DevKitC-1) ----
 #define BUTTON_PIN     0      // BOOT button; wire a big button between this pin and GND

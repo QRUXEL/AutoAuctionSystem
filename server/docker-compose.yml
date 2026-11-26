@@ -1,13 +1,33 @@
-# Deploy on the local Coolify server as a Docker Compose resource.
-# Give the "web" port (8080) a domain in Coolify; the FTP ports are published
-# straight on the host because the camera talks plain FTP, not HTTP.
+# Deployed on the local Coolify as a Docker Compose resource (base directory /server).
+# Coolify lists every ${VAR} below in the resource's Environment Variables page.
+# The web app is also published on host port 8095 so the ESP32 can reach it over plain
+# http on the LAN; the FTP ports are published directly because the camera speaks plain FTP.
 services:
   station:
     build: .
     restart: unless-stopped
-    env_file: .env
+    environment:
+      - REVIEW_PASSWORD=${REVIEW_PASSWORD}
+      - STATION_KEY=${STATION_KEY}
+      - FTP_USER=${FTP_USER:-camera}
+      - FTP_PASSWORD=${FTP_PASSWORD}
+      - FTP_PORT=2121
+      - FTP_PASSIVE_PORTS=30000-30009
+      - FTP_PUBLIC_HOST=${FTP_PUBLIC_HOST:-10.8.0.247}
+      - EXPECTED_PHOTOS=${EXPECTED_PHOTOS:-4}
+      - EXPECTED_VIDEOS=${EXPECTED_VIDEOS:-1}
+      - GRACE_SECONDS=${GRACE_SECONDS:-45}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_MODEL=${AI_MODEL:-claude-sonnet-5-5}
+      - LISTING_LANGUAGE=${LISTING_LANGUAGE:-Swedish}
+      - AI_EXTRA_INSTRUCTIONS=${AI_EXTRA_INSTRUCTIONS}
+      - TRADERA_APP_ID=${TRADERA_APP_ID}
+      - TRADERA_APP_KEY=${TRADERA_APP_KEY}
+      - TRADERA_USER_ID=${TRADERA_USER_ID}
+      - TRADERA_USER_TOKEN=${TRADERA_USER_TOKEN}
+      - TRADERA_DRY_RUN=${TRADERA_DRY_RUN:-1}
     ports:
-      - "8080:8080"
+      - "8095:8080"
       - "2121:2121"
       - "30000-30009:30000-30009"
     volumes:
