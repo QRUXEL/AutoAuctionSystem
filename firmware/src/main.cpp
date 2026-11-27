@@ -39,7 +39,7 @@
 
 #include "config.h"
 
-#define FIRMWARE_VERSION "2026-11-27.8"
+#define FIRMWARE_VERSION "2026-11-27.9"
 #include "headone.h"
 #include "sony.h"
 
@@ -742,22 +742,35 @@ input[type=number]{width:96px}input[type=range]{width:100%;padding:0}input[type=
 .inline{display:flex;gap:8px;align-items:center}.inline input[type=text],.inline input:not([type]){flex:1;min-width:0}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.chips button{padding:6px 10px;font-size:13px;font-weight:500}
 .sep{border:0;border-top:1px solid var(--line);margin:14px 0}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.nav{color:var(--acc);text-decoration:none;font-size:15px;font-weight:600}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+background:var(--card);font-size:13px;font-weight:500}.pill small{color:var(--mute);font-weight:400}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--mute)}.pill.ok i{background:var(--ok)}
+.pill.wait i{background:var(--warn)}.pill.bad i{background:var(--bad)}.pill.plain{color:var(--mute);border-style:dashed}
+#notes{min-height:0;margin-bottom:4px}#notes:empty{display:none}
+.hero{display:grid;gap:10px;margin:14px 0 8px}.big{font-size:22px;padding:24px 14px;border-radius:14px}
+#sess.open{border-color:var(--acc);color:var(--acc)}button.wide{width:100%;margin-top:6px}
 </style>
 <main>
-<h1>Auction station</h1><div class="sub" id="conn">connecting…</div>
-<div class="card" id="cam"><div class="row"><span class="dot"></span><span class="name">Camera</span><span class="state"></span></div><div class="note"></div></div>
-<div class="card" id="tab"><div class="row"><span class="dot"></span><span class="name">Turntable</span><span class="state"></span></div><div class="note"></div></div>
-<div class="btns">
-<button id="pair">Start pairing</button>
-<button id="cap" class="primary">Start capture</button>
-<button id="sess" style="grid-column:1/-1" title="For a kit: every capture until Stop item goes into one listing">Start item (kit)</button>
-<div id="sessinfo" class="hint" style="grid-column:1/-1;margin-top:-4px" hidden></div>
-<button id="stop" class="stop" hidden>Stop</button>
-</div>
+<div class="top"><h1>Auction station</h1><a class="nav" href="#settings" id="tosettings">Settings ›</a><a class="nav" href="#" id="toback" hidden>‹ Back</a></div>
+<div class="pills"><span class="pill" id="cam"><i></i>Camera</span><span class="pill" id="tab"><i></i>Turntable<small id="batp"></small></span>
+<span class="pill plain" id="conn">connecting…</span></div>
+<div class="hint" id="notes"></div>
 <div id="msg"></div>
+
+<section id="v-main">
+<div class="hero">
+<button id="cap" class="primary big">Take 4 angles</button>
+<button id="stop" class="stop big" hidden>Stop</button>
+<button id="sess" title="For a kit: every capture until Stop item goes into one listing">Start item (kit)</button>
+</div>
+<div id="sessinfo" class="hint" hidden></div>
+<button id="pair" class="small wide" hidden>Start pairing</button>
 <p class="hint" id="pairhint" hidden>Pairing is open. On the camera: <b>Bluetooth Rmt Ctrl</b> on, then <b>Bluetooth &gt; Pairing</b>. Turn the HeadONE on and close the edelkrone app.</p>
 
-<div class="card" id="manual"><h2>Turntable control</h2>
+<div class="card" id="manual" style="margin-top:14px"><h2>Turntable control</h2>
 <div class="angle"><b id="ang">–</b><span>from the zero mark</span><button class="small" id="zero">Set zero here</button></div>
 <div class="field"><label for="spd">Speed</label><span id="spdv"></span>
 <input class="wide" type="range" id="spd" min="2" max="100" value="30"></div>
@@ -772,7 +785,12 @@ input[type=number]{width:96px}input[type=range]{width:100%;padding:0}input[type=
 <button class="small" id="go">Go</button><button class="small" id="tstop">Stop</button></div>
 <div class="chips" id="stopchips"></div></div>
 
-<div class="card"><details id="setdet"><summary>Capture settings</summary>
+<div class="card"><dl class="kv">
+<dt>Last result</dt><dd id="last">–</dd><dt>Last item</dt><dd id="item">–</dd><dt>Wi-Fi</dt><dd id="rssi">–</dd></dl></div>
+</section>
+
+<section id="v-settings" hidden>
+<div class="card"><h2>Capture settings</h2>
 <div class="field"><label class="wide" for="stops">Photo stops (degrees from the start, comma separated)</label>
 <input class="wide" id="stops" placeholder="0,90,180,270"></div>
 <div class="inline"><label for="even">Spread</label><input type="number" id="even" min="1" max="24" value="4">
@@ -794,39 +812,43 @@ input[type=number]{width:96px}input[type=range]{width:100%;padding:0}input[type=
 <div class="field"><label for="lead">Still video before and after the spin (ms)</label><input type="number" id="lead" min="0" max="10000" step="100"></div>
 </details>
 <div class="grid2" style="margin-top:14px"><button class="primary" id="save">Save settings</button><button id="reset">Back to defaults</button></div>
-<div id="setmsg" class="hint" style="margin-top:8px"></div></details></div>
+<div id="setmsg" class="hint" style="margin-top:8px"></div></div>
 
-<div class="card"><h2>Camera test</h2><div class="grid2">
+<div class="card"><h2>Camera</h2><div class="grid2">
 <button class="small" id="shot">Take a photo</button><button class="small" id="rec">Start / stop video</button></div>
 <hr class="sep"><dl class="kv"><dt>Station time</dt><dd id="now">–</dd><dt>Camera clock</dt><dd id="clk">–</dd></dl>
 <button class="small" id="setclk" style="margin-top:10px;width:100%">Set the camera's date and time</button></div>
-
-<div class="card"><dl class="kv">
-<dt>Last result</dt><dd id="last">–</dd><dt>Last item</dt><dd id="item">–</dd>
-<dt>Table battery</dt><dd id="bat">–</dd><dt>Wi-Fi</dt><dd id="rssi">–</dd></dl></div>
-<footer><a href="/status">/status</a> · <a href="/settings">/settings</a> · <a href="/update">firmware update</a></footer>
+<button class="small wide" id="pair2">Start pairing again</button>
+<footer><a href="/status">/status</a> · <a href="/settings">/settings</a> · <a href="/devices">/devices</a> · <a href="/update">firmware update</a></footer>
+</section>
 </main>
 <script>
-const $=id=>document.getElementById(id);let s=null,fails=0;
-function dev(el,on,note,pairing){el.className='card '+(on?'ok':pairing||/search/.test(note)?'wait':'bad');
-el.querySelector('.state').textContent=on?'connected':pairing?'pairing…':'not connected';
-el.querySelector('.note').textContent=on?'':note;}
+const $=id=>document.getElementById(id);let s=null,fails=0,nStops=4;
+const JOB={capture:'taking photos',turn:'turning',goto:'turning',drive:'turning',numeric:'turning'};
+function pill(el,on,note,pairing){el.className='pill '+(on?'ok':pairing||/search/.test(note)?'wait':'bad');
+el.title=on?'connected':note;}
 function show(){if(!s)return;const p=s.pairing_s>0;
-dev($('cam'),s.camera,s.camera_note,p);dev($('tab'),s.table,s.table_note,p);
+pill($('cam'),s.camera,s.camera_note,p);pill($('tab'),s.table,s.table_note,p);
+$('batp').textContent=s.table&&s.table_battery>=0?' '+s.table_battery+'%':'';
+const notes=[];if(!s.camera)notes.push('Camera: '+(p?'pairing…':s.camera_note));if(!s.table)notes.push('Turntable: '+(p?'pairing…':s.table_note));
+$('notes').textContent=notes.join(' · ');
 $('last').textContent=s.last;$('item').textContent=s.last_item>0?'#'+s.last_item:'–';
-$('bat').textContent=s.table_battery>=0?s.table_battery+' %':'–';
 $('rssi').textContent=s.wifi_rssi+' dBm'+(s.wifi_rssi<-75?' (weak)':'');
-$('pair').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing';$('pair').disabled=s.busy||p;
-const linked=s.camera&&s.table&&!p;$('pair').hidden=linked;$('cap').style.gridColumn=linked?'1/-1':'';
-$('pairhint').hidden=!p;$('cap').disabled=s.busy;$('cap').hidden=s.busy;$('stop').hidden=!s.busy;
+const linked=s.camera&&s.table&&!p;
+for(const b of [$('pair'),$('pair2')]){b.disabled=s.busy||p;}
+$('pair').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing';$('pair').hidden=linked;
+$('pair2').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing again';
+$('pairhint').hidden=!p;
+$('cap').hidden=s.busy;$('cap').disabled=!linked;$('stop').hidden=!s.busy;
+$('cap').title=linked?'':'Camera and turntable must both be connected';
 const open=s.session_item>0;
+$('cap').textContent='Take '+nStops+' angle'+(nStops==1?'':'s')+(open?' into #'+s.session_item:'');
 $('sess').textContent=s.session_pending?'…':open?'Stop item #'+s.session_item:'Start item (kit)';
-$('sess').disabled=!!s.session_pending||s.busy;
+$('sess').className=open?'open':'';$('sess').disabled=!!s.session_pending||s.busy;
 $('sessinfo').hidden=!open&&!s.session_note;
 $('sessinfo').textContent=open?'Item #'+s.session_item+' is open: '+s.session_photos+' photos, '+s.session_videos+
 ' videos so far. Every capture goes into it until you stop it.':s.session_note;
-$('cap').textContent=open?'Capture into item #'+s.session_item:'Start capture';
-$('conn').textContent=s.busy?'busy: '+s.job:'ready to use';
+$('conn').textContent=s.busy?(JOB[s.job]||'busy')+'…':linked?'ready':'not ready';
 $('ang').textContent=s.table?s.table_angle.toFixed(1)+'°':'–';
 const free=s.table&&!s.busy,driving=s.busy&&s.job=='drive';
 document.querySelectorAll('.hold').forEach(b=>b.disabled=!s.table||(s.busy&&!driving));
@@ -841,7 +863,10 @@ async function post(path,ok){const m=$('msg');m.className='';m.textContent='…'
 try{const r=await fetch(path,{method:'POST'});m.textContent=r.ok?ok:(r.status==409?'Busy, try again in a moment':'Failed ('+r.status+')');
 if(!r.ok)m.className='err';}catch(e){m.className='err';m.textContent='Station not reachable';}
 setTimeout(()=>{if(m.textContent!=='…')m.textContent=''},5000);}
-$('pair').onclick=()=>post('/pair','Pairing started');
+$('pair').onclick=$('pair2').onclick=()=>post('/pair','Pairing started');
+function route(){const st=location.hash=='#settings';$('v-main').hidden=st;$('v-settings').hidden=!st;
+$('tosettings').hidden=st;$('toback').hidden=!st;if(st)release();scrollTo(0,0);}
+addEventListener('hashchange',route);
 $('cap').onclick=()=>post('/trigger','Capture started');
 $('sess').onclick=()=>s.session_item>0?post('/session/stop','Closing item #'+s.session_item):post('/session/start','Opening an item');
 $('stop').onclick=()=>post('/abort','Stopping');
@@ -884,7 +909,7 @@ catch(e){m.className='err';m.textContent='Station not reachable';}};
 // settings
 function chips(list){const c=$('stopchips');c.innerHTML='';list.split(',').filter(x=>x!=='').forEach(a=>{
 const b=document.createElement('button');b.textContent=a+'°';b.title='Go to this photo stop';b.onclick=()=>goTo(+a);c.appendChild(b);});}
-function fillSettings(c){$('stops').value=c.stops;chips(c.stops);$('even').value=c.stops.split(',').length;
+function fillSettings(c){$('stops').value=c.stops;chips(c.stops);$('even').value=nStops=c.stops.split(',').length;show();
 $('pspd').value=Math.round(c.photo_speed*100);$('vspd').value=Math.round(c.video_speed*100);showP();showV();
 $('settle').value=c.settle_ms;$('wait').value=c.wait_ms;$('video').checked=!!c.video;$('dir').value=c.clockwise;
 $('hpt').value=c.head_per_table;$('slow').value=c.slow_zone;$('minspd').value=Math.round(c.min_speed*100);
@@ -903,7 +928,7 @@ clockwise:$('dir').value,head_per_table:$('hpt').value,slow_zone:$('slow').value
 stop_early:$('early').value,video_lead_ms:$('lead').value,video_c1:$('vc1').checked?1:0}),'Saved. The next capture uses these.');
 $('reset').onclick=()=>{if(confirm('Put all capture settings back to the defaults?'))saveSettings(new URLSearchParams({reset:1}),'Back to the defaults.');};
 fetch('/settings').then(r=>r.json()).then(fillSettings).catch(()=>{});
-poll();
+route();poll();
 </script></html>)html";
 
 static void setupWeb() {
