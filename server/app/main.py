@@ -471,15 +471,23 @@ def campaign_check(body: dict):
         return {"ok": False, "message": str(exc)}
 
 
+@app.get("/api/settings/charities")
+def charity_list():
+    return tradera.charities()
+
+
 @app.post("/api/settings/campaign-codes")
 def campaign_codes(body: dict):
     """Tries likely campaign codes (and any typed) against a category; Tradera can't list them."""
     if not config.tradera_ready():
         raise HTTPException(409, "Connect Tradera first")
-    if not body.get("category_id"):
-        raise HTTPException(422, "Pick a category")
-    extra = [c for c in body.get("codes", []) if isinstance(c, str)] + [config.settings().get("campaign_code") or ""]
-    return tradera.find_campaigns(int(body["category_id"]), extra)
+    category = body.get("category_id") or tradera.default_check_category()
+    if not category:
+        raise HTTPException(422, "Pick a category to check against")
+    codes = [str(c) for c in body.get("codes", []) if isinstance(c, (str, int))]
+    if body.get("only"):
+        return tradera.find_campaigns(int(category), codes, only=True)
+    return tradera.find_campaigns(int(category), codes + [config.settings().get("campaign_code") or ""])
 
 
 @app.post("/api/settings/test/{what}")

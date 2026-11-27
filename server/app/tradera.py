@@ -74,16 +74,66 @@ _REASONS = {
 }
 
 
+# ---- charities (tradera.com's own list; not part of the documented API) -----------------------------
+CHARITIES_URL = "https://www.tradera.com/api/webclient/selling/charities"
+KNOWN_CHARITIES = [{"id": "3164", "name": "Musikhjälpen"}]       # fallback if the list can't be fetched
+_charity_cache = {"at": 0.0, "list": []}
+
+
+def _find_charities(node, out: list):
+    """The list's exact shape isn't documented: collects every object that has an id and a name."""
+    if isinstance(node, dict):
+        cid = next((node[k] for k in ("id", "charityId", "organizationId", "organisationId", "campaignCode", "code") if node.get(k)), None)
+        name = next((node[k] for k in ("name", "title", "displayName", "organizationName", "charityName") if node.get(k)), None)
+        if cid is not None and isinstance(name, str):
+            out.append({"id": str(cid), "name": name.strip()})
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                _find_charities(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _find_charities(v, out)
+
+
+def charities() -> dict:
+    """{charities: [{id, name}], source: 'tradera' | 'fallback', error}; cached for an hour."""
+    if _charity_cache["list"] and time.time() - _charity_cache["at"] < 3600:
+        return {"charities": _charity_cache["list"], "source": "tradera", "error": None}
+    try:
+        r = requests.get(CHARITIES_URL, timeout=20, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0 (AuctionStation)"})
+        r.raise_for_status()
+        found: list = []
+        _find_charities(r.json(), found)
+        unique = list({c["id"]: c for c in found}.values())
+        if not unique:
+            raise ValueError("the list had no recognisable entries")
+        unique.sort(key=lambda c: c["name"].lower())
+        _charity_cache.update(at=time.time(), list=unique)
+        return {"charities": unique, "source": "tradera", "error": None}
+    except Exception as exc:
+        return {"charities": KNOWN_CHARITIES, "source": "fallback", "error": f"Could not read Tradera's charity list: {str(exc)[:200]}"}
+
+
+def default_check_category() -> int | None:
+    """A category to check a code against when none is given: the most used one among recent items."""
+    from . import db
+    row = db.one("SELECT category_id, COUNT(*) AS n FROM items WHERE category_id IS NOT NULL GROUP BY category_id ORDER BY n DESC LIMIT 1")
+    if row:
+        return row["category_id"]
+    leaves = categories()
+    return leaves[0]["id"] if leaves else None
+
+
 # Tradera has no endpoint that lists campaign codes. A campaign's code appears to match its page name
 # (tradera.com/campaign/<code>), so these are tried; Tradera's validation says which ones exist.
-CAMPAIGN_CANDIDATES = ["musikhjalpen", "musikhjälpen", "Musikhjalpen", "musikhjalpen2026", "musikhjalpen26", "mh2026", "mh26",
+CAMPAIGN_CANDIDATES = ["3164", "musikhjalpen", "musikhjälpen", "Musikhjalpen", "musikhjalpen2026", "musikhjalpen26", "mh2026", "mh26",
                        "radiohjalpen", "streamhjalpen"]
 
 
-def find_campaigns(category_id: int, extra: list | None = None) -> list:
+def find_campaigns(category_id: int, extra: list | None = None, only: bool = False) -> list:
     """Checks the candidate codes (and any extra) against a category; valid ones first."""
     seen, out = set(), []
-    for code in [*(extra or []), *CAMPAIGN_CANDIDATES]:
+    for code in [*(extra or []), *([] if only else CAMPAIGN_CANDIDATES)]:
         code = (code or "").strip()
         if not code or code.lower() in seen:
             continue

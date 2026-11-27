@@ -80,9 +80,10 @@ tradera.com or how long they are kept, so don't leave them waiting for days.
 **Categories.** The AI picks the category from Tradera's own tree in two steps: first the section (e.g. *Hem & Hushåll > Porslin & Glas*),
 then the category inside it, with word matches added. If it can't decide, the item's notes say so and the category is left for you.
 
-**Charity auctions (Musikhjälpen):** Tradera's API cannot list campaign codes, so the Settings page asks Tradera about likely codes
-(a campaign's code seems to match its page, e.g. tradera.com/campaign/musikhjalpen → `musikhjalpen`) for a category you pick, and
-offers the ones Tradera accepts in a dropdown. A code you were given can be checked and used there too.
+**Charity auctions (Musikhjälpen):** the Settings page lists tradera.com's charities (read from
+`https://www.tradera.com/api/webclient/selling/charities`, which is not part of the documented API; if it can't be read, Musikhjälpen
+= 3164 is built in). The chosen charity's id is sent as the listing's `campaignCode`, and Tradera is asked right away whether it
+accepts it (against a category you pick, or the one your items use most). Any other code can be entered there too.
 Every listing is then created with `campaignCode`. Before creating it, the server asks Tradera
 (`POST /v4/listings/validate-campaign-code`) whether the code is valid for the item's category. If it isn't, nothing is created
 and the item shows why: code unknown, campaign not started or ended, category not allowed, code already used, or account not allowed.
