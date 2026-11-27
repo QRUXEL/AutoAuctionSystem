@@ -104,10 +104,11 @@ export interface Check { ok: boolean; message: string }
 export class ApiError extends Error {}
 
 export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  const form = init.body instanceof FormData;          // file uploads go as multipart, the browser sets the header
   const r = await fetch(path, {
     method: init.method ?? 'GET',
-    headers: init.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    headers: init.body !== undefined && !form ? { 'Content-Type': 'application/json' } : undefined,
+    body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new ApiError((data as { detail?: string; error?: string }).detail ?? (data as { error?: string }).error ?? r.statusText);

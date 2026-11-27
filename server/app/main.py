@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hmac
 import json
@@ -10,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -215,6 +216,24 @@ def photo_preview(item_id: int, seq: int):
     return FileResponse(out, headers={"Cache-Control": "private, max-age=3600"})
 
 
+@app.post("/api/items/{item_id}/photos")
+async def upload_photos(item_id: int, files: list[UploadFile] = File(...)):
+    """Adds photos from the computer or phone to an item (JPEG, PNG, HEIC)."""
+    editable(get_item(item_id))
+    uploads = []
+    for f in files:
+        data = await f.read()
+        if len(data) > 40 * 1024 * 1024:
+            raise HTTPException(413, f"{f.filename} is over 40 MB")
+        uploads.append((f.filename or "upload.jpg", data))
+    try:
+        await asyncio.to_thread(ingest.add_uploads, item_id, uploads)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    videohost.kick()
+    return item_json(get_item(item_id))
+
+
 @app.put("/api/items/{item_id}/photos/order")
 def reorder_photos(item_id: int, body: dict = Body(...)):
     """{"order": [3, 1, 2, 4]} puts photo 3 first (the main photo on Tradera); {"order": null} restores shooting order."""
@@ -284,7 +303,7 @@ def _listing(item_id: int, upload_video: bool):
     """What would go to Tradera for this item: (item, image paths, settings, video link)."""
     item = get_item(item_id)
     photos = db.query("SELECT framed FROM files WHERE item_id = ? AND kind = 'photo' ORDER BY seq", item_id)
-    paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]]
+    paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]][:ingest.MAX_PHOTOS]   # Tradera's limit
     if videohost.configured():
         # dry runs and checks don't upload; they use the link if the background upload has already happened
         video_url = videohost.link_for_publish(item_id) if upload_video else (videohost.view(item_id) or {}).get("url")

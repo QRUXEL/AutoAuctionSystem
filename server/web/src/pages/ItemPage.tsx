@@ -1,11 +1,11 @@
 import {
-  ActionIcon, Alert, Anchor, AspectRatio, Badge, Box, Button, Center, Code, CopyButton, Grid, Group, Image, Loader, Modal, NumberInput,
-  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton, Switch } from '@mantine/core';
+  ActionIcon, Alert, Anchor, AspectRatio, Badge, Button, Center, Code, CopyButton, Grid, Group, Image, Loader, Modal, NumberInput,
+  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, Switch } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   IconAdjustmentsHorizontal, IconAlertCircle, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
-  IconSparkles, IconTrash, IconChevronLeft, IconChevronRight, IconStar } from '@tabler/icons-react';
+  IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
+import { PhotoGrid } from '../components/PhotoGrid';
 import { watchSend } from '../watchSend';
 import { BidderSelect, bidderName, ShippingPicker } from '../components/ShippingPicker';
 import { AdjustModal } from '../components/AdjustModal';
@@ -118,7 +119,19 @@ export function ItemPage() {
     refresh();
     watchSend(id, navigate);
   });
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const upload = async (files: File[]) => {
+    const body = new FormData();
+    files.forEach((f) => body.append('files', f));
+    setBusy('upload');
+    try {
+      const updated = await api<Item>(`/api/items/${id}/photos`, { method: 'POST', body });
+      refresh(updated);
+      setSelected(updated.photos.length - 1);
+      notifications.show({ color: 'green', message: `${files.length} photo${files.length === 1 ? '' : 's'} added` });
+    } catch (e) {
+      notifications.show({ color: 'red', title: 'Upload failed', message: (e as Error).message });
+    } finally { setBusy(null); }
+  };
   const reorder = async (order: number[] | null, select?: number) => {
     setBusy('order');
     try {
@@ -190,82 +203,42 @@ export function ItemPage() {
       <Grid gap="lg">
         <Grid.Col span={{ base: 12, md: 7 }}>
           <Stack gap="sm">
-            <Paper withBorder p={4} radius="md">
+            <Paper withBorder p={4} radius="md" pos="relative">
               <AspectRatio ratio={1}>
                 {photo?.framed
                   ? <Center bg="dark.8"><Image src={photo.framed} radius="sm" fit="contain" h="100%" w="100%" alt="" /></Center>
                   : <Center bg="dark.6"><Text c="dimmed">No photo yet</Text></Center>}
               </AspectRatio>
+              {photo && !locked && (
+                <Group gap={6} pos="absolute" top={12} right={12}>
+                  <Button size="xs" leftSection={<IconCrop size={14} />} onClick={() => setCropping(photo)}>Crop</Button>
+                  <Button size="xs" variant="default" leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setAdjusting(photo)}>Adjust</Button>
+                </Group>
+              )}
+              {photo && (
+                <Group gap={6} pos="absolute" bottom={12} left={12}>
+                  <Badge variant="filled" color={selected === 0 ? 'yellow' : 'dark'}>{selected === 0 ? 'Main photo' : `Photo ${selected + 1}`}</Badge>
+                  <Badge variant="filled" color={photo.manual_crop ? 'violet' : 'dark'}>{photo.manual_crop ? 'Your crop' : 'Automatic crop'}</Badge>
+                  {(photo.adjust.brightness !== 0 || photo.adjust.contrast !== 0) && <Badge variant="filled" color="orange">Adjusted</Badge>}
+                </Group>
+              )}
             </Paper>
-            {photo && (
-              <Group justify="space-between">
-                <Group gap="xs">
-                  <Button size="xs" leftSection={<IconCrop size={14} />} onClick={() => setCropping(photo)} disabled={locked}>Crop photo {photo.seq}</Button>
-                  <Button size="xs" variant="light" leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setAdjusting(photo)}
-                    disabled={locked}>Adjust</Button>
-                  <Badge variant="light" color={photo.manual_crop ? 'violet' : 'gray'}>{photo.manual_crop ? 'Your crop' : 'Automatic crop'}</Badge>
-                  {(photo.adjust.brightness !== 0 || photo.adjust.contrast !== 0) && (
-                    <Tooltip label={`Brightness ${photo.adjust.brightness > 0 ? '+' : ''}${photo.adjust.brightness}, contrast ${photo.adjust.contrast > 0 ? '+' : ''}${photo.adjust.contrast}`}>
-                      <Badge variant="light" color="orange">Adjusted</Badge>
-                    </Tooltip>
-                  )}
-                </Group>
-                <Group gap={4}>
-                <Tooltip label={selected === 0 ? 'This is the main photo: it is shown first and as the thumbnail on Tradera' : 'Shown first and as the thumbnail on Tradera'}>
-                  <Button size="xs" variant="subtle" color="yellow" leftSection={<IconStar size={14} />}
-                    onClick={() => move(selected, 0)} loading={busy === 'order'} disabled={locked || selected === 0}>Make main photo</Button>
-                </Tooltip>
-                <Tooltip label="Removes the photo from this item. It goes to Loose shots, where you can delete it for good or put it back">
-                  <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />}
-                    onClick={detach('photo', photo.seq)} loading={busy === 'detach'} disabled={locked || item.photos.length < 2}>Remove</Button>
-                </Tooltip>
-                <Tooltip label="Frame all photos again, for example after changing the logo or frame">
-                  <Button size="xs" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} onClick={reframe}
-                    loading={busy === 'reframe'} disabled={locked}>Re-frame</Button>
-                </Tooltip>
-                </Group>
+            <PhotoGrid photos={item.photos} selected={selected} locked={locked} busy={busy}
+              onSelect={setSelected} onMove={move} onCrop={setCropping} onAdjust={setAdjusting}
+              onRemove={(p) => detach('photo', p.seq)()} onUpload={upload} />
+            <Group justify="space-between">
+              <Group gap="xs">
+                {!!item.manual_order && !locked && (
+                  <Anchor size="xs" c="dimmed" component="button" onClick={() => reorder(null, 0)}>Back to shooting order</Anchor>
+                )}
+                {item.photos.length < item.expected_photos && BUSY.includes(item.status) && (
+                  <Text size="sm" c="dimmed">Waiting for {item.expected_photos - item.photos.length} more…</Text>
+                )}
               </Group>
-            )}
-            <Group gap="xs">
-              {item.photos.map((p, i) => (
-                <UnstyledButton key={p.id} onClick={() => setSelected(i)} draggable={!locked}
-                  onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
-                  onDragOver={(e) => { if (dragFrom !== null) e.preventDefault(); }}
-                  onDrop={(e) => { e.preventDefault(); if (dragFrom !== null) move(dragFrom, i); setDragFrom(null); }}
-                  onDragEnd={() => setDragFrom(null)}>
-                  <Box w={84} h={84} style={{
-                    borderRadius: 8, overflow: 'hidden', position: 'relative', opacity: dragFrom === i ? 0.4 : 1,
-                    cursor: locked ? 'pointer' : 'grab',
-                    outline: i === selected ? '2px solid var(--mantine-primary-color-filled)' : '1px solid var(--mantine-color-dark-4)',
-                  }}>
-                    {p.framed && <Image src={p.framed} w={84} h={84} fit="contain" bg="dark.8" alt="" draggable={false} />}
-                    {p.manual_crop && <IconCrop size={14} style={{ position: 'absolute', right: 4, top: 4, color: 'white' }} />}
-                    {i === 0 && (
-                      <Badge size="xs" color="yellow" variant="filled" style={{ position: 'absolute', left: 4, bottom: 4 }}>Main</Badge>
-                    )}
-                  </Box>
-                </UnstyledButton>
-              ))}
-              {!locked && item.photos.length > 1 && (
-                <Stack gap={2}>
-                  <Group gap={2}>
-                    <Tooltip label="Move the selected photo left">
-                      <ActionIcon variant="default" size="sm" disabled={selected === 0 || busy === 'order'} onClick={() => move(selected, selected - 1)}
-                        aria-label="Move left"><IconChevronLeft size={14} /></ActionIcon>
-                    </Tooltip>
-                    <Tooltip label="Move the selected photo right">
-                      <ActionIcon variant="default" size="sm" disabled={selected >= item.photos.length - 1 || busy === 'order'}
-                        onClick={() => move(selected, selected + 1)} aria-label="Move right"><IconChevronRight size={14} /></ActionIcon>
-                    </Tooltip>
-                  </Group>
-                  {!!item.manual_order && (
-                    <Anchor size="xs" c="dimmed" component="button" onClick={() => reorder(null, 0)}>Shooting order</Anchor>
-                  )}
-                </Stack>
-              )}
-              {item.photos.length < item.expected_photos && BUSY.includes(item.status) && (
-                <Text size="sm" c="dimmed">Waiting for {item.expected_photos - item.photos.length} more…</Text>
-              )}
+              <Tooltip label="Frame all photos again, for example after changing the logo or frame">
+                <Button size="xs" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} onClick={reframe}
+                  loading={busy === 'reframe'} disabled={locked}>Re-frame all</Button>
+              </Tooltip>
             </Group>
             {item.videos.map((v) => (
               <Paper key={v.url} withBorder p="xs">

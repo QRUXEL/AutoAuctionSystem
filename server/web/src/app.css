@@ -1,0 +1,4 @@
+/* photo tiles on the item page: actions appear on hover, always visible on touch screens */
+.photo-tile .photo-tile-actions { opacity: 0; transition: opacity 120ms; }
+.photo-tile:hover .photo-tile-actions, .photo-tile:focus-within .photo-tile-actions { opacity: 1; }
+@media (hover: none) { .photo-tile .photo-tile-actions { opacity: 1; } }

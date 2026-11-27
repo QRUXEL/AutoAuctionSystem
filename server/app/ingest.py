@@ -8,6 +8,7 @@ server's clock. A file belongs to the item whose start-end window contains its
 shot time. Anything else, such as test shots, is kept as a loose shot
 (files.item_id = 0) and can be deleted or turned into an item on the site.
 """
+import io
 import json
 import logging
 import queue
@@ -156,6 +157,37 @@ def _place(file_id: int, item_id: int):
         videos.ensure_token(file_id)
         videos.queue_web_copy(file_id)
     return seq
+
+
+MAX_PHOTOS = 40          # Tradera takes up to 40 images per listing
+
+
+def add_uploads(item_id: int, uploads: list) -> list:
+    """Photos uploaded on the item page (receipts, close-ups, other shots): stored as JPEG, upright,
+    added after the item's photos and framed like the rest. uploads: [(file name, bytes)]."""
+    from PIL import Image, ImageOps
+    from . import imaging  # noqa: F401  (registers the HEIF opener)
+    have = _count(item_id, "photo")
+    if have + len(uploads) > MAX_PHOTOS:
+        raise ValueError(f"Tradera takes at most {MAX_PHOTOS} photos per listing; this item has {have}")
+    added = []
+    for name, data in uploads:
+        try:
+            with Image.open(io.BytesIO(data)) as im:
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                tmp = config.ITEMS / LOOSE_DIR / f"upload-{time.time_ns()}.jpg"
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                im.save(tmp, "JPEG", quality=92)
+        except Exception as exc:
+            raise ValueError(f"{name} is not a photo that can be read ({exc})") from exc
+        file_id = db.run("INSERT INTO files (item_id, kind, seq, raw, received_at, name) VALUES (0, 'photo', 0, ?, ?, ?)",
+                         str(tmp.relative_to(config.ITEMS)), db.now(), name)
+        _place(file_id, item_id)
+        added.append(file_id)
+    _renumber(item_id)
+    for file_id in added:
+        frame_one(db.one("SELECT * FROM files WHERE id = ?", file_id))
+    return added
 
 
 def file_received(path: Path):

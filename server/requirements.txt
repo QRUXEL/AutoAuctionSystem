@@ -6,3 +6,4 @@ requests>=2.32
 anthropic>=0.40
 pillow-heif>=0.18
 tzdata
+python-multipart>=0.0.9
