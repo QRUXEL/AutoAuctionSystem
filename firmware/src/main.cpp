@@ -39,7 +39,7 @@
 
 #include "config.h"
 
-#define FIRMWARE_VERSION "2026-11-27.7"
+#define FIRMWARE_VERSION "2026-11-27.8"
 #include "headone.h"
 #include "sony.h"
 
@@ -817,6 +817,7 @@ $('last').textContent=s.last;$('item').textContent=s.last_item>0?'#'+s.last_item
 $('bat').textContent=s.table_battery>=0?s.table_battery+' %':'–';
 $('rssi').textContent=s.wifi_rssi+' dBm'+(s.wifi_rssi<-75?' (weak)':'');
 $('pair').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing';$('pair').disabled=s.busy||p;
+const linked=s.camera&&s.table&&!p;$('pair').hidden=linked;$('cap').style.gridColumn=linked?'1/-1':'';
 $('pairhint').hidden=!p;$('cap').disabled=s.busy;$('cap').hidden=s.busy;$('stop').hidden=!s.busy;
 const open=s.session_item>0;
 $('sess').textContent=s.session_pending?'…':open?'Stop item #'+s.session_item:'Start item (kit)';
