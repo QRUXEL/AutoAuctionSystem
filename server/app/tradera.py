@@ -34,10 +34,12 @@ def _call(s, method, path, **kw):
     return r.json() if r.content else None
 
 
-def build_payload(item: dict, settings: dict) -> dict:
+def build_payload(item: dict, settings: dict, video_url: str | None = None) -> dict:
+    from .videos import fill_tags
     description = item["description"]
     if settings.get("description_footer"):
         description += "\n\n" + settings["description_footer"]
+    description = fill_tags(description, video_url)
     payload = {
         "title": item["title"][:80],
         "description": description,
@@ -59,10 +61,10 @@ def build_payload(item: dict, settings: dict) -> dict:
     return payload
 
 
-def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None) -> dict:
+def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
     """Create the listing, upload images, commit, and wait for Tradera's verdict."""
     s = _session()
-    payload = build_payload(item, settings)
+    payload = build_payload(item, settings, video_url)
     key = f"auction-station-{item['id']}-{item['publish_attempts']}"
     queued = _call(s, "POST", "/v4/listings/items", json=payload, headers={"Idempotency-Key": key})
     request_id, item_id = queued["requestId"], queued.get("itemId")

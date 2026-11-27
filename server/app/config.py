@@ -44,6 +44,7 @@ EDITABLE = {
     "TRADERA_PUBLIC_KEY": ("str", os.getenv("TRADERA_PUBLIC_KEY", "")),     # the app's public key, for the token login
     "TRADERA_TOKEN_EXPIRES": ("str", ""),                                   # set by the token login
     "TRADERA_DRY_RUN": ("bool", os.getenv("TRADERA_DRY_RUN", "1") != "0"),
+    "PUBLIC_BASE_URL": ("str", os.getenv("PUBLIC_BASE_URL", "")),           # e.g. https://aas.qruxel.productions
     "EXPECTED_PHOTOS": ("int", int(os.getenv("EXPECTED_PHOTOS", "4"))),
     "EXPECTED_VIDEOS": ("int", int(os.getenv("EXPECTED_VIDEOS", "1"))),
     "GRACE_SECONDS": ("int", int(os.getenv("GRACE_SECONDS", "120"))),

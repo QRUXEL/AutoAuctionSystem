@@ -26,6 +26,7 @@ services:
       - TRADERA_USER_ID=${TRADERA_USER_ID}
       - TRADERA_USER_TOKEN=${TRADERA_USER_TOKEN}
       - TRADERA_DRY_RUN=${TRADERA_DRY_RUN:-1}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://aas.qruxel.productions}
     ports:
       - "8095:8080"
       - "2121:2121"

@@ -31,7 +31,7 @@ export interface Item {
   published_at: number | null;
   expected_photos: number;
   photos: Photo[];
-  videos: { seq: number; url: string; name: string }[];
+  videos: { seq: number; url: string; name: string; public_url: string | null; public_path: string | null; web_status: '' | 'queued' | 'working' | 'ready' | 'failed' }[];
 }
 
 export interface Info {
@@ -67,6 +67,7 @@ export interface Settings {
     TRADERA_USER_ID: string;
     TRADERA_PUBLIC_KEY: string;
     TRADERA_TOKEN_EXPIRES: string;
+    PUBLIC_BASE_URL: string;
     TRADERA_DRY_RUN: boolean;
     EXPECTED_PHOTOS: number;
     EXPECTED_VIDEOS: number;

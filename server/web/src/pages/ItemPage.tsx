@@ -1,5 +1,5 @@
 import {
-  ActionIcon, Alert, Anchor, AspectRatio, Badge, Box, Button, Center, Grid, Group, Image, Loader, Modal, NumberInput,
+  ActionIcon, Alert, Anchor, AspectRatio, Badge, Box, Button, Center, Code, CopyButton, Grid, Group, Image, Loader, Modal, NumberInput,
   Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
@@ -47,7 +47,7 @@ export function ItemPage() {
   const { data: item, error } = useQuery({
     queryKey: ['item', id],
     queryFn: () => api<Item>(`/api/items/${id}`),
-    refetchInterval: (q) => (q.state.data && BUSY.includes(q.state.data.status) ? 2000 : 10000),
+    refetchInterval: (q) => (q.state.data && (BUSY.includes(q.state.data.status) || q.state.data.videos.some((v) => ['queued', 'working'].includes(v.web_status))) ? 2000 : 10000),
   });
 
   const [form, setForm] = useState<Form | null>(null);
@@ -209,14 +209,37 @@ export function ItemPage() {
             {item.videos.map((v) => (
               <Paper key={v.url} withBorder p="xs">
                 <Group justify="space-between" mb={6}>
-                  <Text size="sm" fw={500}>Spin video</Text>
+                  <Group gap="xs">
+                    <Text size="sm" fw={500}>Spin video</Text>
+                    <Badge size="sm" variant="light" color={{ ready: 'green', failed: 'red' }[v.web_status as string] ?? 'blue'}>
+                      {{ ready: 'Web copy ready', failed: 'Web copy failed', working: 'Making web copy…', queued: 'Waiting for web copy' }[v.web_status as string] ?? 'Not prepared'}
+                    </Badge>
+                  </Group>
                   <Group gap="sm">
                     {!locked && <Anchor size="sm" c="dimmed" component="button" onClick={detach('video', v.seq)}>Move to loose shots</Anchor>}
-                    <Anchor size="sm" href={v.url} download>Download</Anchor>
+                    <Anchor size="sm" href={v.url} download>Download original</Anchor>
                   </Group>
                 </Group>
-                <video src={v.url} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6 }} />
-                <Text size="xs" c="dimmed" mt={4}>Tradera's API takes photos only, so the video is not added to the listing.</Text>
+                {v.web_status === 'ready' && v.public_path
+                  ? <video src={`${v.public_path}/video.mp4`} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6, background: '#000' }} />
+                  : <Center h={120} bg="dark.8" style={{ borderRadius: 6 }}>
+                      {v.web_status === 'failed'
+                        ? <Button size="xs" variant="light" onClick={act('webcopy', async () => { await api(`/api/items/${id}/videos/${v.seq}/web-copy`, { method: 'POST' }); refresh(); qc.invalidateQueries({ queryKey: ['item', id] }); })}>Try again</Button>
+                        : <Group gap="xs"><Loader size="xs" /><Text size="sm" c="dimmed">Preparing the video for the web</Text></Group>}
+                    </Center>}
+                {v.public_url && (
+                  <Group gap={6} mt={6} wrap="nowrap">
+                    <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>Public link:</Text>
+                    <Anchor size="xs" href={v.public_path ?? undefined} target="_blank" truncate style={{ flex: 1 }}>{v.public_url}</Anchor>
+                    <CopyButton value={v.public_url}>
+                      {({ copied, copy }) => <Button size="compact-xs" variant="subtle" onClick={copy}>{copied ? 'Copied' : 'Copy'}</Button>}
+                    </CopyButton>
+                  </Group>
+                )}
+                <Text size="xs" c="dimmed" mt={4}>
+                  Write <Code>{'<video link>'}</Code> in the description (or in the footer text under Settings) where the link should go.
+                  It is filled in when you publish.
+                </Text>
               </Paper>
             ))}
           </Stack>
@@ -234,6 +257,12 @@ export function ItemPage() {
               rightSection={<Text size="xs" c="dimmed">{form.title.length}/80</Text>} rightSectionWidth={52} />
             <Textarea label="Description" autosize minRows={8} maxRows={22} value={form.description} disabled={locked}
               onChange={(e) => set('description', e.currentTarget.value)} />
+            {item.videos.length > 0 && !locked && !/<\s*(youtube\s+)?video\s+link\s*>/i.test(form.description) && (
+              <Anchor size="xs" component="button" type="button" style={{ alignSelf: 'flex-start', marginTop: -6 }}
+                onClick={() => set('description', `${form.description.trimEnd()}\n\nVideo: <video link>`)}>
+                + Add the video link to the description
+              </Anchor>
+            )}
             <CategorySelect value={form.category} onChange={(v) => set('category', v)} disabled={locked} traderaReady={!!info?.tradera_ready || !info?.dry_run} />
             <Group grow align="flex-start">
               <NumberInput label="Start price" suffix=" kr" min={1} allowDecimal={false} value={form.start_price} disabled={locked}

@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, layout, tradera
+from . import config, db, describe, ftp, imaging, ingest, layout, tradera, videos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -27,6 +27,7 @@ STATUSES = ("capturing", "processing", "review", "publishing", "published", "err
 async def lifespan(_app):
     db.init()
     ingest.start()
+    videos.start()
     ftp.start()
     yield
 
@@ -36,7 +37,7 @@ app = FastAPI(title="Auction station", lifespan=lifespan)
 
 @app.middleware("http")
 async def auth(request: Request, call_next):
-    if request.url.path == "/healthz":
+    if request.url.path == "/healthz" or request.url.path.startswith("/v/"):   # health check, public video pages
         return await call_next(request)
     key = request.headers.get("x-station-key", "")
     if config.STATION_KEY and hmac.compare_digest(key, config.STATION_KEY):
@@ -73,7 +74,10 @@ def item_json(item: dict) -> dict:
         "adjust": json.loads(f["adjust"]) if f["adjust"] else {"brightness": 0, "contrast": 0},
         "name": f["name"],
     } for f in files if f["kind"] == "photo"]
-    item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"]} for f in files if f["kind"] == "video"]
+    item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"],
+                       "public_url": videos.public_url(f["token"]) if f["token"] else None,
+                       "public_path": f"/v/{f['token']}" if f["token"] else None,
+                       "web_status": f["web_status"] or ""} for f in files if f["kind"] == "video"]
     return item
 
 
@@ -236,14 +240,15 @@ def _publish(item_id: int):
     paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]]
     settings = config.settings()
     try:
+        video_url = videos.link_for_item(item_id)
         if config.dry_run():
-            payload = tradera.build_payload(item, settings)
+            payload = tradera.build_payload(item, settings, video_url)
             (config.ITEMS / str(item_id) / "tradera_payload.json").write_text(
                 json.dumps({"payload": payload, "images": [p.name for p in paths]}, ensure_ascii=False, indent=2), "utf-8")
             db.update_item(item_id, status="review",
                            message="Dry run: nothing was sent to Tradera. The request is saved next to the photos.")
             return
-        result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m))
+        result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
         db.update_item(item_id, status="published", message="", published_at=db.now(),
                        tradera_request_id=result["request_id"], tradera_item_id=result["item_id"])
     except Exception as exc:
@@ -521,6 +526,31 @@ class _HideTokens(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_HideTokens())
 
 
+# ---- public video pages (no password) -------------------------------------------------
+@app.get("/v/{token}", include_in_schema=False)
+def video_page(token: str):
+    status, body = videos.page(token)
+    return Response(body, status_code=status, media_type="text/html", headers={"X-Robots-Tag": "noindex, nofollow"})
+
+
+@app.get("/v/{token}/{what}", include_in_schema=False)
+def video_media(token: str, what: str):
+    path = videos.media(token, what)
+    if not path or not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path, headers={"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "public, max-age=3600"})
+
+
+@app.post("/api/items/{item_id}/videos/{seq}/web-copy")
+def retry_web_copy(item_id: int, seq: int):
+    f = db.one("SELECT id FROM files WHERE item_id = ? AND kind = 'video' AND seq = ?", item_id, seq)
+    if not f:
+        raise HTTPException(404)
+    db.run("UPDATE files SET web_status = '' WHERE id = ?", f["id"])
+    videos.queue_web_copy(f["id"])
+    return {"ok": True}
+
+
 # ---- files and the web app -------------------------------------------------------
 app.mount("/media", StaticFiles(directory=config.ITEMS), name="media")
 if (WEB / "assets").exists():
@@ -529,7 +559,7 @@ if (WEB / "assets").exists():
 
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
-    if path.startswith(("api/", "media/", "tradera/")):
+    if path.startswith(("api/", "media/", "tradera/", "v/")):
         raise HTTPException(404)
     target = WEB / path
     if path and target.is_file() and WEB in target.resolve().parents:

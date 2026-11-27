@@ -152,6 +152,12 @@ export function SettingsPage() {
         )}
       </Section>
 
+      <Section title="Video links">
+        <TextInput label="Public address of this site" placeholder="https://aas.qruxel.productions"
+          description="Used to build the video links that replace <video link> in descriptions. Video pages need no password."
+          value={draft.values.PUBLIC_BASE_URL} onChange={(e) => setValue('PUBLIC_BASE_URL', e.currentTarget.value)} />
+      </Section>
+
       <Section title="Listing defaults">
         <Group align="flex-end" grow>
           <Stack gap={4}>
@@ -179,6 +185,7 @@ export function SettingsPage() {
           value={draft.shipping} error={shippingError}
           onChange={(v) => { setDraft({ ...draft, shipping: v }); setDirty(true); }} />
         <Textarea label="Text added under every description" autosize minRows={2}
+          description="Can hold <video link>; the line is left out for items without a video."
           value={draft.listing.description_footer} onChange={(e) => setListing('description_footer', e.currentTarget.value)} />
       </Section>
 

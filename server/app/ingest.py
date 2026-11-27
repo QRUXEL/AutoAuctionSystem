@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, db, describe, imaging, shottime
+from . import config, db, describe, imaging, shottime, videos
 
 log = logging.getLogger("ingest")
 PHOTO_EXT = {".jpg", ".jpeg", ".hif", ".heif", ".heic"}
@@ -112,6 +112,9 @@ def _place(file_id: int, item_id: int):
         shutil.move(str(config.ITEMS / f["raw"]), dest)
     db.run("UPDATE files SET item_id = ?, seq = ?, raw = ?, framed = '', crop = '', crop_auto = '', adjust = '' WHERE id = ?",
            item_id, seq, rel, file_id)
+    if item_id and f["kind"] == "video":
+        videos.ensure_token(file_id)
+        videos.queue_web_copy(file_id)
     return seq
 
 
