@@ -9,6 +9,7 @@ export interface Photo {
   preview: string;
   crop: Crop | null;
   manual_crop: boolean;
+  name: string;
 }
 
 export interface Item {
@@ -29,7 +30,7 @@ export interface Item {
   published_at: number | null;
   expected_photos: number;
   photos: Photo[];
-  videos: string[];
+  videos: { seq: number; url: string; name: string }[];
 }
 
 export interface Info {
@@ -38,6 +39,8 @@ export interface Info {
   ai_ready: boolean;
   photo_aspect: number;
   counts: Record<Status, number>;
+  loose: number;
+  camera_offset: number | null;
 }
 
 export interface SecretState { set: boolean; hint: string; source: 'settings' | 'env' | 'none' }
@@ -88,3 +91,16 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 }
 
 export const ref = (id: number) => `#${String(id).padStart(4, '0')}`;
+
+export interface LooseFile {
+  id: number;
+  kind: 'photo' | 'video';
+  name: string;
+  shot_at: number | null;
+  received_at: number;
+  url: string;
+  thumb: string | null;
+}
+
+export const clock = (t: number | null | undefined) =>
+  t ? new Date(t * 1000).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'medium' }) : '–';

@@ -70,8 +70,9 @@ def item_json(item: dict) -> dict:
         "preview": f"/api/items/{item['id']}/photos/{f['seq']}/preview",
         "crop": json.loads(f["crop"] or f["crop_auto"] or "null"),
         "manual_crop": bool(f["crop"]),
+        "name": f["name"],
     } for f in files if f["kind"] == "photo"]
-    item["videos"] = [f"/media/{f['raw']}" for f in files if f["kind"] == "video"]
+    item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"]} for f in files if f["kind"] == "video"]
     return item
 
 
@@ -104,9 +105,10 @@ def info():
     counts = {s: 0 for s in STATUSES}
     for row in db.query("SELECT status, COUNT(*) AS n FROM items GROUP BY status"):
         counts[row["status"]] = row["n"]
+    loose = db.one("SELECT COUNT(*) AS n FROM files WHERE item_id = 0")["n"]
     return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(),
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
-            "counts": counts}
+            "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset()}
 
 
 @app.get("/api/items")
@@ -240,6 +242,70 @@ def categories(q: str = ""):
         return tradera.search_categories(q.split(), limit=25) if q.strip() else []
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+# ---- loose shots ----------------------------------------------------------------
+def _ids(body: dict) -> list:
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(422, "Nothing selected")
+    return ids
+
+
+@app.get("/api/loose")
+def list_loose():
+    rows = db.query("SELECT * FROM files WHERE item_id = 0 ORDER BY COALESCE(shot_at, received_at) DESC, id DESC LIMIT 1000")
+    return [{"id": f["id"], "kind": f["kind"], "name": f["name"], "shot_at": f["shot_at"], "received_at": f["received_at"],
+             "url": f"/media/{f['raw']}", "thumb": f"/api/files/{f['id']}/thumb" if f["kind"] == "photo" else None}
+            for f in rows]
+
+
+@app.post("/api/loose/make-item")
+def loose_make_item(body: dict = Body(...)):
+    try:
+        return {"id": ingest.make_item(_ids(body))}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post("/api/loose/attach")
+def loose_attach(body: dict = Body(...)):
+    try:
+        ingest.attach(_ids(body), int(body.get("item_id") or 0))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/loose/delete")
+def loose_delete(body: dict = Body(...)):
+    try:
+        return {"deleted": ingest.delete_loose(_ids(body))}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post("/api/items/{item_id}/files/{kind}/{seq}/detach")
+def detach_file(item_id: int, kind: str, seq: int):
+    editable(get_item(item_id))
+    if kind not in ("photo", "video"):
+        raise HTTPException(404)
+    try:
+        ingest.detach(item_id, kind, seq)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"ok": True}
+
+
+@app.get("/api/files/{file_id}/thumb")
+def file_thumb(file_id: int):
+    f = db.one("SELECT * FROM files WHERE id = ? AND kind = 'photo'", file_id)
+    if not f:
+        raise HTTPException(404)
+    out = config.DATA / "thumbs" / f"{file_id}.jpg"
+    if not out.exists():
+        imaging.preview(config.ITEMS / f["raw"], out, size=480)
+    return FileResponse(out, headers={"Cache-Control": "private, max-age=86400"})
 
 
 # ---- settings ------------------------------------------------------------------

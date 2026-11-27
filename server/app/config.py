@@ -46,7 +46,7 @@ EDITABLE = {
     "TRADERA_DRY_RUN": ("bool", os.getenv("TRADERA_DRY_RUN", "1") != "0"),
     "EXPECTED_PHOTOS": ("int", int(os.getenv("EXPECTED_PHOTOS", "4"))),
     "EXPECTED_VIDEOS": ("int", int(os.getenv("EXPECTED_VIDEOS", "1"))),
-    "GRACE_SECONDS": ("int", int(os.getenv("GRACE_SECONDS", "45"))),
+    "GRACE_SECONDS": ("int", int(os.getenv("GRACE_SECONDS", "120"))),
 }
 
 # Listing defaults; also editable per item on the item page

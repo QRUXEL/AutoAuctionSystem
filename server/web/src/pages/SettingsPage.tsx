@@ -66,7 +66,12 @@ export function SettingsPage() {
       const secrets = Object.fromEntries(Object.entries(draft.secrets).filter(([, v]) => v !== ''));
       const fresh = await api<Settings>('/api/settings', {
         method: 'PUT',
-        body: { values: draft.values, secrets, listing: { ...draft.listing, shipping_options: shipping } },
+        // only what was changed, so untouched fields keep following the defaults and Coolify's variables
+        body: {
+          values: changed(draft.values, data.values),
+          secrets,
+          listing: changed({ ...draft.listing, shipping_options: shipping }, data.listing),
+        },
       });
       qc.setQueryData(['settings'], fresh);
       qc.invalidateQueries({ queryKey: ['info'] });
@@ -282,4 +287,10 @@ function ReturnUrl({ label, path }: { label: string; path: string }) {
       </CopyButton>
     </Group>
   );
+}
+
+function changed<T extends object>(draft: T, saved: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(draft).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify((saved as Record<string, unknown>)[k])),
+  ) as Partial<T>;
 }

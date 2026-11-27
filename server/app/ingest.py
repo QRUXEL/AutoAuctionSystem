@@ -1,9 +1,12 @@
 """Turns files arriving from the camera into items, then frames and describes them.
 
-Matching rule: the station agent opens an item before it starts shooting. Photos
-go to the oldest item that is still short of photos, videos to the oldest recent
-item short of a video. If nothing is open (someone pressed the shutter by hand),
-a "manual" item is created and closes after GRACE_SECONDS without new files.
+Matching is by time. The station controller reports when a capture starts
+(POST /api/items) and ends (POST /api/items/{id}/captured); the server stamps
+both on its own clock. Every file's shot time is read from the file (EXIF for
+photos, the MP4 header for videos) and converted from the camera's clock to the
+server's clock. A file belongs to the item whose start-end window contains its
+shot time. Anything else, such as test shots, is kept as a loose shot
+(files.item_id = 0) and can be deleted or turned into an item on the site.
 """
 import json
 import logging
@@ -13,20 +16,19 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, db, describe, imaging
+from . import config, db, describe, imaging, shottime
 
 log = logging.getLogger("ingest")
 PHOTO_EXT = {".jpg", ".jpeg"}
 VIDEO_EXT = {".mp4", ".mov"}
+LOOSE_DIR = "loose"
+MARGIN = 3.0             # seconds of slack around a capture window
+STALE_WINDOW = 900       # an item whose end never arrives stops matching files after this
 _work: "queue.Queue[tuple]" = queue.Queue()
 
 
 def open_item(source: str = "station", photos: int | None = None, videos: int | None = None) -> int:
     s = config.settings()
-    if source == "station":
-        # hand-shot photos still waiting for more must not swallow this item's photos
-        for manual in db.query("SELECT id FROM items WHERE status = 'capturing' AND source = 'manual'"):
-            _start_processing(manual["id"])
     return db.run(
         "INSERT INTO items (status, source, created_at, expected_photos, expected_videos, start_price, duration_days)"
         " VALUES ('capturing', ?, ?, ?, ?, ?, ?)",
@@ -38,38 +40,190 @@ def _count(item_id: int, kind: str) -> int:
     return db.one("SELECT COUNT(*) AS n FROM files WHERE item_id = ? AND kind = ?", item_id, kind)["n"]
 
 
+# ---- clocks -------------------------------------------------------------------------
+def camera_offset(latest: float | None = None) -> float | None:
+    """Server time minus camera time, in seconds.
+
+    A photo reaches the server a few seconds after it is shot, so (received - shot
+    on the camera's clock) is the clock offset plus a small upload delay. The
+    smallest value over recent photos is the best estimate: a slow upload only
+    makes its own value larger, so one quick upload is enough to keep it right.
+    """
+    rows = db.query("SELECT received_at - cam_time AS d FROM files WHERE kind = 'photo' AND cam_time IS NOT NULL"
+                    " AND received_at > ? ORDER BY id DESC LIMIT 30", db.now() - 6 * 3600)
+    values = [r["d"] for r in rows] + ([latest] if latest is not None else [])
+    return min(values) if values else None
+
+
+def _windows() -> list:
+    now = db.now()
+    out = []
+    for item in db.query("SELECT * FROM items WHERE source = 'station' AND created_at > ? ORDER BY id",
+                         now - 2 * 86400):
+        end = item["captured_at"] or min(now, item["created_at"] + STALE_WINDOW)
+        if not item["captured_at"] and now - item["created_at"] > STALE_WINDOW:
+            end = item["created_at"] + STALE_WINDOW
+        out.append((item["created_at"] - MARGIN, end + MARGIN, item))
+    return out
+
+
+def _match(t: float | None, kind: str):
+    """The item whose capture window contains server time t."""
+    if t is None:
+        return None
+    hits = [item for start, end, item in _windows() if start <= t <= end]
+    if kind == "photo":
+        hits = [i for i in hits if i["status"] == "capturing" or _count(i["id"], "photo") < i["expected_photos"]]
+    return hits[-1] if hits else None
+
+
+def _video_item(cam: float | None, received: float):
+    """Videos: the MP4 header time may be on UTC rather than the camera's local clock,
+    so whole-hour shifts are tried, nearest first. Without a usable header, the most
+    recent capture that ended shortly before the upload and still lacks a video is used."""
+    offset = camera_offset()
+    if cam is not None and offset is not None:
+        for hours in sorted(range(-14, 15), key=abs):
+            t = cam + offset + hours * 3600
+            item = _match(t, "video")
+            if item and _count(item["id"], "video") < item["expected_videos"]:
+                return item, t
+    for start, end, item in reversed(_windows()):
+        if item["captured_at"] and 0 <= received - item["captured_at"] < 3600 and \
+                _count(item["id"], "video") < item["expected_videos"]:
+            return item, None
+    return None, None
+
+
+# ---- intake --------------------------------------------------------------------------
+def _place(file_id: int, item_id: int):
+    """Moves a stored file into an item (or to the loose shots with item_id 0)."""
+    f = db.one("SELECT * FROM files WHERE id = ?", file_id)
+    ext = Path(f["raw"]).suffix.lower()
+    if item_id:
+        seq = _count(item_id, f["kind"]) + 1
+        rel = f"{item_id}/raw/{f['kind']}-{seq:02d}-{file_id}{ext}"
+    else:
+        seq = 0
+        rel = f"{LOOSE_DIR}/{file_id}{ext}"
+    dest = config.ITEMS / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if f["raw"] != rel:
+        shutil.move(str(config.ITEMS / f["raw"]), dest)
+    db.run("UPDATE files SET item_id = ?, seq = ?, raw = ?, framed = '', crop = '', crop_auto = '' WHERE id = ?",
+           item_id, seq, rel, file_id)
+    return seq
+
+
 def file_received(path: Path):
     ext = path.suffix.lower()
     kind = "photo" if ext in PHOTO_EXT else "video" if ext in VIDEO_EXT else None
     if not kind:
         log.info("ignoring %s", path.name)
+        path.unlink(missing_ok=True)
         return
+    received = db.now()
+    cam = shottime.photo_time(path) if kind == "photo" else shottime.video_time(path)
     with db.lock():
-        item = None
+        # store it as loose first, so nothing is lost if matching fails
+        staging = config.ITEMS / LOOSE_DIR / f"incoming-{time.time_ns()}{ext}"
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), staging)
+        file_id = db.run("INSERT INTO files (item_id, kind, seq, raw, received_at, name, cam_time) VALUES (0, ?, 0, ?, ?, ?, ?)",
+                         kind, str(staging.relative_to(config.ITEMS)), received, path.name, cam)
         if kind == "photo":
-            for cand in db.query("SELECT * FROM items WHERE status = 'capturing' ORDER BY id"):
-                if _count(cand["id"], "photo") < cand["expected_photos"]:
-                    item = cand
-                    break
+            offset = camera_offset(None if cam is None else received - cam)
+            shot = cam + offset if cam is not None and offset is not None else received - 2
+            item = _match(shot, "photo")
         else:
-            for cand in db.query("SELECT * FROM items WHERE created_at > ? AND status != 'published' ORDER BY id",
-                                 db.now() - 1800):
-                if _count(cand["id"], "video") < cand["expected_videos"]:
-                    item = cand
-                    break
+            item, shot = _video_item(cam, received)
+        db.run("UPDATE files SET shot_at = ? WHERE id = ?", shot, file_id)
+        seq = _place(file_id, item["id"] if item else 0)
         if not item:
-            item = db.one("SELECT * FROM items WHERE id = ?", open_item("manual", photos=99))
-        seq = _count(item["id"], kind) + 1
-        rel = f"{item['id']}/raw/{kind}-{seq:02d}{ext}"
-        dest = config.ITEMS / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(path), dest)
-        db.run("INSERT INTO files (item_id, kind, seq, raw, received_at) VALUES (?, ?, ?, ?, ?)",
-               item["id"], kind, seq, rel, db.now())
-        db.update_item(item["id"], last_file_at=db.now())
-        log.info("item %s: %s %s", item["id"], kind, seq)
+            log.info("loose %s %s (shot %s, not inside any capture)", kind, path.name, shot)
+            return
+        db.update_item(item["id"], last_file_at=received)
+        log.info("item %s: %s %s (%s)", item["id"], kind, seq, path.name)
         if kind == "photo" and item["status"] == "capturing" and seq >= item["expected_photos"]:
             _start_processing(item["id"])
+        elif kind == "photo" and item["status"] in ("review", "error"):
+            _start_processing(item["id"], photos=True, text=False)   # arrived late: frame it in
+
+
+def make_item(file_ids: list) -> int:
+    """Turns loose shots into a new item, in the order they were shot."""
+    with db.lock():
+        files = _loose(file_ids)
+        photos = [f for f in files if f["kind"] == "photo"]
+        if not photos:
+            raise ValueError("Pick at least one photo")
+        item_id = open_item("manual", photos=len(photos), videos=len(files) - len(photos))
+        db.update_item(item_id, captured_at=db.now())
+        for f in files:
+            _place(f["id"], item_id)
+        _start_processing(item_id)
+        return item_id
+
+
+def attach(file_ids: list, item_id: int):
+    """Adds loose shots to an existing item; new photos are framed, the text is left alone."""
+    with db.lock():
+        item = db.one("SELECT * FROM items WHERE id = ?", item_id)
+        if not item or item["status"] in ("publishing", "published"):
+            raise ValueError("That item can't take more photos")
+        files = _loose(file_ids)
+        for f in files:
+            _place(f["id"], item_id)
+        _renumber(item_id)
+        n = _count(item_id, "photo")
+        db.update_item(item_id, expected_photos=max(item["expected_photos"], n))
+        if item["status"] in ("review", "error"):
+            _start_processing(item_id, photos=True, text=False)
+
+
+def detach(item_id: int, kind: str, seq: int):
+    """Moves one file out of an item back to the loose shots, renumbering the rest."""
+    with db.lock():
+        f = db.one("SELECT * FROM files WHERE item_id = ? AND kind = ? AND seq = ?", item_id, kind, seq)
+        if not f:
+            raise ValueError("No such file")
+        if f["framed"]:
+            (config.ITEMS / f["framed"]).unlink(missing_ok=True)
+        _place(f["id"], 0)
+        for i, rest in enumerate(db.query("SELECT id FROM files WHERE item_id = ? AND kind = ? ORDER BY seq", item_id, kind), 1):
+            db.run("UPDATE files SET seq = ? WHERE id = ?", i, rest["id"])
+        if kind == "photo":
+            _start_processing(item_id, photos=True, text=False)
+
+
+def _renumber(item_id: int):
+    """Puts an item's photos and videos back in the order they were shot."""
+    for kind in ("photo", "video"):
+        rows = db.query("SELECT id FROM files WHERE item_id = ? AND kind = ? ORDER BY COALESCE(shot_at, received_at), id",
+                        item_id, kind)
+        for i, r in enumerate(rows, 1):
+            db.run("UPDATE files SET seq = ? WHERE id = ?", i, r["id"])
+
+
+def delete_loose(file_ids: list) -> int:
+    with db.lock():
+        files = _loose(file_ids)
+        for f in files:
+            (config.ITEMS / f["raw"]).unlink(missing_ok=True)
+            (config.DATA / "thumbs" / f"{f['id']}.jpg").unlink(missing_ok=True)
+            db.run("DELETE FROM files WHERE id = ?", f["id"])
+        return len(files)
+
+
+def _loose(file_ids: list) -> list:
+    ids = [int(i) for i in file_ids]
+    if not ids:
+        raise ValueError("Nothing selected")
+    files = db.query(f"SELECT * FROM files WHERE item_id = 0 AND id IN ({','.join('?' * len(ids))})"
+                     " ORDER BY COALESCE(shot_at, received_at), id", *ids)
+    if len(files) != len(set(ids)):
+        raise ValueError("Some of those shots are no longer loose")
+    return files
 
 
 def _start_processing(item_id: int, photos: bool = True, text: bool = True):
@@ -121,22 +275,25 @@ def _worker():
 
 
 def _watchdog():
-    """Close items whose files stopped arriving, so one lost photo never blocks the queue."""
+    """Closes captures: when the end is reported and the photos are in, or after a grace period."""
     while True:
         time.sleep(5)
         now = db.now()
+        grace = config.get("GRACE_SECONDS")
         for item in db.query("SELECT * FROM items WHERE status = 'capturing'"):
             n = _count(item["id"], "photo")
-            quiet_since = max(item["last_file_at"] or 0, item["captured_at"] or 0)
-            if item["source"] == "station" and not item["captured_at"]:
-                quiet_since = max(quiet_since, item["created_at"] + 300)   # agent never reported back
-            if n and now - quiet_since > config.get("GRACE_SECONDS"):
-                short = "" if item["source"] == "manual" or n >= item["expected_photos"] else \
-                    f"Only {n} of {item['expected_photos']} photos arrived."
+            ended = item["captured_at"] or (item["created_at"] + STALE_WINDOW if now - item["created_at"] > STALE_WINDOW else None)
+            if not ended or now - max(ended, item["last_file_at"] or 0) < grace:
+                continue
+            if n:
+                note = "" if n >= item["expected_photos"] else f"Only {n} of {item['expected_photos']} photos were shot during the capture."
+                if not item["captured_at"]:
+                    note = (note + " The station never reported the end of the capture.").strip()
                 _start_processing(item["id"])
-                db.update_item(item["id"], message=short)
-            elif not n and now - item["created_at"] > 600:
-                db.update_item(item["id"], status="error", message="No photos arrived from the camera.")
+                db.update_item(item["id"], message=note)
+            else:
+                db.update_item(item["id"], status="error",
+                               message="No photos were shot during the capture. Check Loose shots, and the camera's FTP upload.")
 
 
 def start():

@@ -138,4 +138,12 @@ cd server/web && npm install && npm run dev     # proxies /api to a server on :8
 Photos can be re-cropped per item (the crop box has the frame's shape); the manual crop is kept when photos are re-framed.
 
 ## How files become items
-The controller opens an item just before shooting. Photos go to the oldest item still short of photos; a video goes to the oldest recent item without one. If a photo never arrives, the item is processed anyway after `GRACE_SECONDS` and flagged. If the server can't be reached when a run starts, the photos still arrive and become a "manual" item, so nothing is lost.
+Matching is by time, so test shots never end up in a listing:
+
+1. The ESP32 reports the start of a capture just before the first photo and the end just after the video; the server stamps both on its own clock.
+2. Each file's shot time is read from the file itself (EXIF for photos, the MP4 header for videos).
+3. The camera's clock is rarely right, so the server measures the offset: a photo arrives a few seconds after it is shot, and the smallest (arrival - shot time) over recent photos is the offset. The Loose shots page shows it when it is more than a few seconds. Video headers are sometimes in UTC; whole-hour differences are tried for those.
+4. A file shot inside a capture's window (plus 3 s) goes to that item, however late it is uploaded. A photo that arrives after its item was processed is framed in.
+5. Everything else lands in **Loose shots**, where you can delete it, add it to an item, or make a new item from it. A wrong photo can also be moved out of an item.
+
+An item is processed once all its photos are in, or `GRACE_SECONDS` (default 120, set on the Settings page) after the end of the capture and the last upload. `python tools/test_matching.py` runs the whole scenario against a local server.

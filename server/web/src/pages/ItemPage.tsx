@@ -5,7 +5,7 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
-  IconAlertCircle, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
+  IconAlertCircle, IconArrowBackUp, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
   IconSparkles, IconTrash,
 } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -112,6 +112,13 @@ export function ItemPage() {
     await api(`/api/items/${id}/regenerate`, { method: 'POST', body: { photos: true, text: false } });
     refresh();
   });
+  const detach = (kind: 'photo' | 'video', seq: number) => act('detach', async () => {
+    await api(`/api/items/${id}/files/${kind}/${seq}/detach`, { method: 'POST' });
+    setSelected(0);
+    refresh();
+    qc.invalidateQueries({ queryKey: ['item', id] });
+    notifications.show({ message: `Moved to Loose shots` });
+  });
   const remove = act('delete', async () => {
     await api(`/api/items/${id}`, { method: 'DELETE' });
     refresh();
@@ -160,10 +167,16 @@ export function ItemPage() {
                   <Button size="xs" leftSection={<IconCrop size={14} />} onClick={() => setCropping(photo)} disabled={locked}>Crop photo {photo.seq}</Button>
                   <Badge variant="light" color={photo.manual_crop ? 'violet' : 'gray'}>{photo.manual_crop ? 'Your crop' : 'Automatic crop'}</Badge>
                 </Group>
+                <Group gap={4}>
+                <Tooltip label="Wrong photo? Moves it to Loose shots, where you can delete it or add it to another item">
+                  <Button size="xs" variant="subtle" color="gray" leftSection={<IconArrowBackUp size={14} />}
+                    onClick={detach('photo', photo.seq)} loading={busy === 'detach'} disabled={locked}>Move out</Button>
+                </Tooltip>
                 <Tooltip label="Frame all photos again, for example after changing the logo or frame">
                   <Button size="xs" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} onClick={reframe}
                     loading={busy === 'reframe'} disabled={locked}>Re-frame</Button>
                 </Tooltip>
+                </Group>
               </Group>
             )}
             <Group gap="xs">
@@ -183,12 +196,15 @@ export function ItemPage() {
               )}
             </Group>
             {item.videos.map((v) => (
-              <Paper key={v} withBorder p="xs">
+              <Paper key={v.url} withBorder p="xs">
                 <Group justify="space-between" mb={6}>
                   <Text size="sm" fw={500}>Spin video</Text>
-                  <Anchor size="sm" href={v} download>Download</Anchor>
+                  <Group gap="sm">
+                    {!locked && <Anchor size="sm" c="dimmed" component="button" onClick={detach('video', v.seq)}>Move to loose shots</Anchor>}
+                    <Anchor size="sm" href={v.url} download>Download</Anchor>
+                  </Group>
                 </Group>
-                <video src={v} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6 }} />
+                <video src={v.url} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6 }} />
                 <Text size="xs" c="dimmed" mt={4}>Tradera's API takes photos only, so the video is not added to the listing.</Text>
               </Paper>
             ))}

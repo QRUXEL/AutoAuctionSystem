@@ -45,7 +45,11 @@ CREATE TABLE IF NOT EXISTS files (
 );
 """
 
-MIGRATIONS = {"files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''"}}
+# files.item_id = 0 means a loose shot (taken outside any capture window, e.g. a test shot)
+MIGRATIONS = {"files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
+                        "name": "TEXT DEFAULT ''",       # file name from the camera
+                        "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)
+                        "shot_at": "REAL"}}              # shot time converted to the server's clock
 
 
 def init():
