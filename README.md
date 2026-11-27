@@ -77,7 +77,7 @@ Tradera's API takes images only, so the spin video is kept on the server (viewab
 ### 2. Server (Coolify)
 1. Copy `server/.env.example` to `.env` and fill it in. `FTP_PUBLIC_HOST` must be the LAN address the camera uses to reach the server.
 2. Deploy `server/` as a Docker Compose resource. Give port 8080 a domain; ports 2121 and 30000-30009 are published directly for FTP.
-3. Replace `logo.png` and edit `frame.json` in the `station-branding` volume. Drop in an `overlay.png` (transparent, 1600×1600) for a designer-made frame.
+3. Set up the frame, logo and texts on the site's **Photo layout** page (stored in the `station-branding` volume as `layout.json`, with uploaded graphics and fonts in `assets/`).
 
 ### 3. Camera (A7 IV)
 - File format JPEG (HEIF and RAW are ignored by the server).
@@ -136,6 +136,9 @@ React + Mantine (dark), in `server/web/`. The Docker image builds it; for local 
 cd server/web && npm install && npm run dev     # proxies /api to a server on :8080
 ```
 Photos can be re-cropped per item (the crop box has the frame's shape); the manual crop is kept when photos are re-framed.
+
+## Photo layout
+Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.
 
 ## How files become items
 Matching is by time, so test shots never end up in a listing:

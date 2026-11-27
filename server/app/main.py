@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, tradera
+from . import config, db, describe, ftp, imaging, ingest, layout, tradera
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -354,6 +354,82 @@ def test_settings(what: str):
     if what == "tradera":
         return tradera.check()
     raise HTTPException(404)
+
+
+# ---- photo layout -------------------------------------------------------------------
+TEST_SHAPES = {"landscape": 3 / 2, "portrait": 2 / 3, "square": 1.0}
+
+
+@app.get("/api/layout")
+def get_layout():
+    return {"layout": layout.load(), "assets": layout.list_assets()}
+
+
+@app.put("/api/layout")
+def put_layout(body: dict = Body(...)):
+    try:
+        return {"layout": layout.save(body.get("layout") or {}), "assets": layout.list_assets()}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post("/api/layout/preview")
+def layout_preview(body: dict = Body(...)):
+    try:
+        cfg = layout.validate(body.get("layout") or {})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    source = None
+    if body.get("file_id"):
+        f = db.one("SELECT raw FROM files WHERE id = ? AND kind = 'photo'", int(body["file_id"]))
+        source = config.ITEMS / f["raw"] if f else None
+    data = imaging.layout_preview(cfg, source, TEST_SHAPES.get(body.get("test") or ""), int(body.get("size") or 900))
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/layout/samples")
+def layout_samples():
+    rows = db.query("SELECT id, item_id, seq, name FROM files WHERE kind = 'photo' ORDER BY id DESC LIMIT 24")
+    return [{"id": r["id"], "label": (f"#{r['item_id']:04d} photo {r['seq']}" if r["item_id"] else f"Loose: {r['name']}"),
+             "thumb": f"/api/files/{r['id']}/thumb"} for r in rows]
+
+
+@app.get("/api/layout/assets/{name}")
+def get_asset(name: str):
+    try:
+        path = layout.asset_path(name)
+    except ValueError:
+        raise HTTPException(404)
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(path)
+
+
+@app.put("/api/layout/assets/{name}")
+async def put_asset(name: str, request: Request):
+    try:
+        saved = layout.add_asset(name, await request.body())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"name": saved, "assets": layout.list_assets()}
+
+
+@app.delete("/api/layout/assets/{name}")
+def delete_asset(name: str):
+    try:
+        layout.delete_asset(name)
+    except ValueError:
+        raise HTTPException(404)
+    return {"assets": layout.list_assets()}
+
+
+@app.post("/api/layout/apply")
+def apply_layout():
+    """Re-frames the photos of every item that hasn't been published."""
+    items = db.query("SELECT id FROM items WHERE status IN ('review', 'error')")
+    for item in items:
+        ingest.reprocess(item["id"], photos=True, text=False)
+    return {"items": len(items)}
 
 
 # ---- Tradera token login -----------------------------------------------------------

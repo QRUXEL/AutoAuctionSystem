@@ -1,16 +1,13 @@
 """Crop each photo around the product and put it in the branded frame.
 
-Everything visual is driven by branding/frame.json, branding/logo.png and an
-optional branding/overlay.png (a transparent PNG the size of the canvas that is
-laid on top of everything, for a designer-made frame).
+The frame, logo and texts come from the photo layout (layout.py), edited on the
+site's Layout page.
 """
-import json
-from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageOps, ImageStat
 
-from .config import BRANDING
+from . import layout
 
 try:                                   # HEIF photos (.HIF) from Sony cameras
     from pillow_heif import register_heif_opener
@@ -18,47 +15,9 @@ try:                                   # HEIF photos (.HIF) from Sony cameras
 except ImportError:
     pass
 
-DEFAULT_FRAME = {
-    "canvas": [1600, 1600],
-    "border": 36,
-    "border_color": "#1b1b3a",
-    "background": "#ffffff",
-    "footer_height": 150,
-    "footer_color": "#1b1b3a",
-    "footer_text": "",
-    "footer_text_color": "#ffffff",
-    "show_item_ref": True,
-    "logo": "logo.png",
-    "logo_width": 0.18,          # fraction of canvas width
-    "logo_margin": 40,
-    "logo_position": "top-left",  # top-left | top-right | footer-right
-    "overlay": "overlay.png",
-    "font": "",                   # path to a .ttf; empty = DejaVu Sans Bold
-    "crop": {"mode": "auto", "padding": 0.12, "threshold": 28},  # mode: auto | center | none
-}
-
-
 def frame_config() -> dict:
-    cfg = json.loads(json.dumps(DEFAULT_FRAME))
-    path = BRANDING / "frame.json"
-    if path.exists():
-        user = json.loads(path.read_text("utf-8"))
-        crop = {**cfg["crop"], **user.pop("crop", {})}
-        cfg.update(user)
-        cfg["crop"] = crop
-    return cfg
-
-
-@lru_cache(maxsize=8)
-def _font(path: str, size: int):
-    for candidate in (path, "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf"):
-        if not candidate:
-            continue
-        try:
-            return ImageFont.truetype(candidate, size)
-        except OSError:
-            continue
-    return ImageFont.load_default(size)
+    """The current photo layout (see layout.py)."""
+    return layout.load()
 
 
 def _fit_box(cx, cy, w, h, aspect, img_w, img_h):
@@ -126,29 +85,33 @@ def from_fractions(f: dict, img):
     return round(l), round(t), round(r), round(b)
 
 
-def photo_area(cfg: dict):
-    cw, ch = cfg["canvas"]
-    b = cfg["border"]
-    return b, b, cw - b, ch - cfg["footer_height"] - (0 if cfg["footer_height"] else b)
-
-
-def photo_aspect(cfg: dict | None = None) -> float:
-    l, t, r, b = photo_area(cfg or frame_config())
-    return (r - l) / (b - t)
+def photo_aspect(cfg: dict | None = None) -> float | None:
+    """Shape photos are cropped to, or None when each photo keeps its own shape."""
+    return layout.crop_aspect(cfg or frame_config())
 
 
 def load(path: Path) -> Image.Image:
     return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
 
 
-def cropped(path: Path, cfg: dict | None = None, manual: dict | None = None):
-    """Returns (cropped image, crop box as fractions or None when not cropped)."""
-    cfg = cfg or frame_config()
-    img = load(path)
-    box = from_fractions(manual, img) if manual else auto_box(img, photo_aspect(cfg), cfg["crop"])
-    if box is None:
-        return img, None
+def crop_image(img: Image.Image, cfg: dict, manual: dict | None = None):
+    """Returns (cropped image, crop box as fractions, or None when the photo is used whole)."""
+    if manual:
+        box = from_fractions(manual, img)
+    else:
+        aspect = layout.crop_aspect(cfg)
+        if cfg["crop"]["auto"]:
+            box = auto_box(img, aspect or img.width / img.height,
+                           {"mode": "auto", "padding": cfg["crop"]["padding"] / 100, "threshold": 28})
+        elif aspect:
+            box = auto_box(img, aspect, {"mode": "center"})       # largest centred crop of that shape
+        else:
+            return img, None
     return img.crop(box), to_fractions(box, img)
+
+
+def cropped(path: Path, cfg: dict | None = None, manual: dict | None = None):
+    return crop_image(load(path), cfg or frame_config(), manual)
 
 
 def preview(path: Path, out: Path, size: int = 2000) -> Path:
@@ -163,52 +126,35 @@ def preview(path: Path, out: Path, size: int = 2000) -> Path:
 def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = None, manual: dict | None = None):
     """Writes the framed photo. Returns the crop used as fractions (None if the photo was not cropped)."""
     cfg = cfg or frame_config()
-    cw, ch = cfg["canvas"]
-    l, t, r, b = photo_area(cfg)
-    canvas = Image.new("RGB", (cw, ch), cfg["border_color"])
-    canvas.paste(Image.new("RGB", (r - l, b - t), cfg["background"]), (l, t))
     photo, used = cropped(path, cfg, manual)
-    if used is None:
-        photo = ImageOps.contain(photo, (r - l, b - t), Image.LANCZOS)
-        canvas.paste(photo, (l + (r - l - photo.width) // 2, t + (b - t - photo.height) // 2))
-    else:
-        # A manual crop may not match the frame's shape exactly; fit it without distortion.
-        fitted = ImageOps.fit(photo, (r - l, b - t), Image.LANCZOS)
-        canvas.paste(fitted, (l, t))
-
-    draw = ImageDraw.Draw(canvas)
-    fh = cfg["footer_height"]
-    if fh:
-        draw.rectangle((0, ch - fh, cw, ch), fill=cfg["footer_color"])
-        font = _font(cfg.get("font", ""), int(fh * 0.38))
-        mid = ch - fh // 2
-        if cfg.get("footer_text"):
-            draw.text((cfg["border"] + 24, mid), cfg["footer_text"], font=font, fill=cfg["footer_text_color"], anchor="lm")
-        if cfg.get("show_item_ref") and item_ref and cfg.get("logo_position") != "footer-right":
-            draw.text((cw - cfg["border"] - 24, mid), item_ref, font=font, fill=cfg["footer_text_color"], anchor="rm")
-
-    logo_path = BRANDING / cfg.get("logo", "")
-    if cfg.get("logo") and logo_path.exists():
-        logo = Image.open(logo_path).convert("RGBA")
-        lw = int(cw * cfg["logo_width"])
-        logo = logo.resize((lw, max(1, round(logo.height * lw / logo.width))), Image.LANCZOS)
-        m = cfg["logo_margin"]
-        pos = cfg.get("logo_position", "top-left")
-        if pos == "footer-right" and fh:
-            lh = int(fh * 0.7)
-            logo = logo.resize((max(1, round(logo.width * lh / logo.height)), lh), Image.LANCZOS)
-            xy = (cw - cfg["border"] - 24 - logo.width, ch - fh // 2 - lh // 2)
-        elif pos == "top-right":
-            xy = (r - m - logo.width, t + m)
-        else:
-            xy = (l + m, t + m)
-        canvas.paste(logo, xy, logo)
-
-    overlay_path = BRANDING / cfg.get("overlay", "")
-    if cfg.get("overlay") and overlay_path.exists():
-        overlay = Image.open(overlay_path).convert("RGBA").resize((cw, ch), Image.LANCZOS)
-        canvas.paste(overlay, (0, 0), overlay)
-
+    framed = layout.render(photo, cfg, {"ref": item_ref})
     out.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(out, "JPEG", quality=90, optimize=True)
+    framed.save(out, "JPEG", quality=90, optimize=True)
     return used
+
+
+def layout_preview(layout_cfg: dict, source: Path | None, test_aspect: float | None, long_side: int = 900) -> bytes:
+    """A framed sample for the layout editor. test_aspect first trims the sample to that
+    shape, to show how the layout behaves on landscape, portrait or square photos."""
+    import io
+    if source is not None and source.exists():
+        img = load(source)
+        img.thumbnail((1800, 1800), Image.LANCZOS)
+    else:
+        img = _placeholder()
+    if test_aspect:
+        img = img.crop(auto_box(img, test_aspect, {"mode": "center"}))
+    cfg = {**layout_cfg, "canvas": {**layout_cfg["canvas"], "long_side": long_side}}
+    photo, _ = crop_image(img, cfg)
+    buf = io.BytesIO()
+    layout.render(photo, cfg, {"ref": "#0123"}).save(buf, "JPEG", quality=82)
+    return buf.getvalue()
+
+
+def _placeholder() -> Image.Image:
+    from PIL import ImageDraw
+    img = Image.new("RGB", (1800, 1200), (205, 206, 210))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((700, 300, 1100, 1000), 60, fill=(150, 70, 55))
+    d.ellipse((700, 220, 1100, 400), fill=(185, 110, 90))
+    return img

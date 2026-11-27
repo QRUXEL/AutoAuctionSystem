@@ -37,7 +37,7 @@ export interface Info {
   tradera_ready: boolean;
   dry_run: boolean;
   ai_ready: boolean;
-  photo_aspect: number;
+  photo_aspect: number | null;
   counts: Record<Status, number>;
   loose: number;
   camera_offset: number | null;

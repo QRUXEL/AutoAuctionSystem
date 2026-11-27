@@ -1,7 +1,7 @@
 import { AppShell, Badge, Burger, Group, NavLink, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconPhotoQuestion, IconSettings, IconSparkles,
+  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconFrame, IconPhotoQuestion, IconSettings, IconSparkles,
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -9,6 +9,7 @@ import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api, type Info, type Status } from './api';
 import { ItemPage } from './pages/ItemPage';
 import { ItemsPage, VIEWS } from './pages/ItemsPage';
+import { LayoutPage } from './pages/LayoutPage';
 import { LoosePage } from './pages/LoosePage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -64,6 +65,7 @@ export function App() {
           leftSection={<IconPhotoQuestion size={18} />} mt="xs"
           rightSection={info?.loose ? <Badge size="sm" variant="light" color="gray">{info.loose}</Badge> : null} />
         <Stack gap={2} mt="auto">
+          <NavLink component={Link} to="/layout" onClick={close} active={pathname === '/layout'} label="Photo layout" leftSection={<IconFrame size={18} />} />
           <NavLink component={Link} to="/settings" onClick={close} active={pathname === '/settings'} label="Settings" leftSection={<IconSettings size={18} />} />
           <Text size="xs" c="dimmed" px="sm" py={4}>Photos arrive from the camera by themselves.</Text>
         </Stack>
@@ -76,6 +78,7 @@ export function App() {
           <Route path="/items/:id" element={<ItemPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/loose" element={<LoosePage />} />
+          <Route path="/layout" element={<LayoutPage />} />
           <Route path="*" element={<Navigate to="/review" replace />} />
         </Routes>
       </AppShell.Main>

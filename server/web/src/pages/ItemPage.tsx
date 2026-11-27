@@ -257,7 +257,7 @@ export function ItemPage() {
 
       <CropModal
         photo={cropping}
-        aspect={info?.photo_aspect ?? 1}
+        aspect={info ? info.photo_aspect : 1}
         onClose={() => setCropping(null)}
         onSave={async (crop: Crop) => {
           refresh(await api<Item>(`/api/items/${id}/photos/${cropping!.seq}/crop`, { method: 'PUT', body: crop }));
