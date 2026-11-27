@@ -39,7 +39,7 @@ itself and compares them byte for byte.
 | Sony Bluetooth remote | **Not run**; community-documented protocol |
 | Tradera client | Written from Tradera's OpenAPI spec and run against the mock; **not run against the real API** |
 | AI description | Code path present; **not run** (no API key in the build environment) |
-| Review page | Script syntax-checked; **not opened in a browser** |
+| Review site (React + Mantine) | Type-checked, built, and clicked through in headless Chrome against the local server: lists, item page, crop dialog, settings, phone layout |
 
 ## First test on the real hardware
 
@@ -66,9 +66,11 @@ Tradera's API has no drafts: a listing is either uncommitted (invisible) or live
 
 1. Register a developer account and an application at https://api.tradera.com/register.
 2. Get a user token for the selling account (Tradera's token login flow, see their Authorization docs).
-3. Put app id, app key, user id and token in the server's environment.
-4. Fill `shipping_options` and other defaults in `/data/settings.json` (keys are listed in `server/app/config.py`). Shipping ids come from `GET /v4/reference-data/shipping-options`.
-5. Leave `TRADERA_DRY_RUN=1` until a dry run looks right: Publish then only writes `tradera_payload.json` next to the photos.
+3. Enter app ID, app key, user ID and token on the review site's **Settings** page and press **Test connection**.
+4. Set the listing defaults (type, duration, start price, shipping options) on the same page. Shipping ids come from `GET /v4/reference-data/shipping-options`.
+5. Leave **Dry run** on until a dry run looks right: Publish then only writes `tradera_payload.json` next to the photos.
+
+The Claude API key for descriptions is set on the Settings page too. Values saved there override the environment variables in Coolify.
 
 Tradera's API takes images only, so the spin video is kept on the server (viewable and downloadable from the review page) but is not attached to the listing.
 
@@ -127,6 +129,13 @@ curl -X POST http://127.0.0.1:8765/trigger   # the "button"
 python tools/fake_camera.py                  # the "camera"
 ```
 Then open http://127.0.0.1:8080.
+
+## Review site
+React + Mantine (dark), in `server/web/`. The Docker image builds it; for local work:
+```
+cd server/web && npm install && npm run dev     # proxies /api to a server on :8080
+```
+Photos can be re-cropped per item (the crop box has the frame's shape); the manual crop is kept when photos are re-framed.
 
 ## How files become items
 The controller opens an item just before shooting. Photos go to the oldest item still short of photos; a video goes to the oldest recent item without one. If a photo never arrives, the item is processed anyway after `GRACE_SECONDS` and flagged. If the server can't be reached when a run starts, the photos still arrive and become a "manual" item, so nothing is lost.

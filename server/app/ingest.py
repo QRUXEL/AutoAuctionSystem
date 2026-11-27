@@ -5,6 +5,7 @@ go to the oldest item that is still short of photos, videos to the oldest recent
 item short of a video. If nothing is open (someone pressed the shutter by hand),
 a "manual" item is created and closes after GRACE_SECONDS without new files.
 """
+import json
 import logging
 import queue
 import shutil
@@ -17,7 +18,7 @@ from . import config, db, describe, imaging
 log = logging.getLogger("ingest")
 PHOTO_EXT = {".jpg", ".jpeg"}
 VIDEO_EXT = {".mp4", ".mov"}
-_work: "queue.Queue[int]" = queue.Queue()
+_work: "queue.Queue[tuple]" = queue.Queue()
 
 
 def open_item(source: str = "station", photos: int | None = None, videos: int | None = None) -> int:
@@ -29,8 +30,8 @@ def open_item(source: str = "station", photos: int | None = None, videos: int | 
     return db.run(
         "INSERT INTO items (status, source, created_at, expected_photos, expected_videos, start_price, duration_days)"
         " VALUES ('capturing', ?, ?, ?, ?, ?, ?)",
-        source, db.now(), config.EXPECTED_PHOTOS if photos is None else photos,
-        config.EXPECTED_VIDEOS if videos is None else videos, s["start_price"], s["duration_days"])
+        source, db.now(), config.get("EXPECTED_PHOTOS") if photos is None else photos,
+        config.get("EXPECTED_VIDEOS") if videos is None else videos, s["start_price"], s["duration_days"])
 
 
 def _count(item_id: int, kind: str) -> int:
@@ -71,28 +72,37 @@ def file_received(path: Path):
             _start_processing(item["id"])
 
 
-def _start_processing(item_id: int):
+def _start_processing(item_id: int, photos: bool = True, text: bool = True):
     db.update_item(item_id, status="processing", message="")
-    _work.put(item_id)
+    _work.put((item_id, photos, text))
 
 
-def reprocess(item_id: int):
-    _start_processing(item_id)
+def reprocess(item_id: int, photos: bool = True, text: bool = True):
+    _start_processing(item_id, photos, text)
 
 
-def process(item_id: int, redo_text: bool = True):
-    photos = db.query("SELECT * FROM files WHERE item_id = ? AND kind = 'photo' ORDER BY seq", item_id)
+def frame_one(f: dict, cfg: dict | None = None):
+    """(Re)frames one photo, honouring its manual crop. Returns the cropped image for the AI."""
+    cfg = cfg or imaging.frame_config()
+    raw = config.ITEMS / f["raw"]
+    framed_rel = f"{f['item_id']}/framed/{f['seq']:02d}.jpg"
+    manual = json.loads(f["crop"]) if f.get("crop") else None
+    used = imaging.frame_photo(raw, config.ITEMS / framed_rel, item_ref=f"#{f['item_id']:04d}", cfg=cfg, manual=manual)
+    db.run("UPDATE files SET framed = ?, crop_auto = ? WHERE id = ?", framed_rel,
+           "" if manual or used is None else json.dumps(used), f["id"])
+
+
+def process(item_id: int, photos: bool = True, text: bool = True):
+    files = db.query("SELECT * FROM files WHERE item_id = ? AND kind = 'photo' ORDER BY seq", item_id)
     cfg = imaging.frame_config()
-    crops = []
-    for f in photos:
-        raw = config.ITEMS / f["raw"]
-        framed_rel = f"{item_id}/framed/{f['seq']:02d}.jpg"
-        imaging.frame_photo(raw, config.ITEMS / framed_rel, item_ref=f"#{item_id:04d}", cfg=cfg)
-        db.run("UPDATE files SET framed = ? WHERE id = ?", framed_rel, f["id"])
-        crops.append(imaging.cropped(raw, cfg))
+    if photos or any(not f["framed"] for f in files):
+        for f in files:
+            frame_one(f, cfg)
     fields = {"status": "review"}
-    if redo_text:
+    if text:
         try:
+            crops = [imaging.cropped(config.ITEMS / f["raw"], cfg, json.loads(f["crop"]) if f["crop"] else None)[0]
+                     for f in files]
             fields.update(describe.describe(crops))
         except Exception as exc:  # the photos are still usable; a person can write the text
             log.exception("describe failed for item %s", item_id)
@@ -102,9 +112,9 @@ def process(item_id: int, redo_text: bool = True):
 
 def _worker():
     while True:
-        item_id = _work.get()
+        item_id, photos, text = _work.get()
         try:
-            process(item_id)
+            process(item_id, photos, text)
         except Exception as exc:
             log.exception("processing item %s failed", item_id)
             db.update_item(item_id, status="error", message=f"Processing failed: {exc}")
@@ -120,7 +130,7 @@ def _watchdog():
             quiet_since = max(item["last_file_at"] or 0, item["captured_at"] or 0)
             if item["source"] == "station" and not item["captured_at"]:
                 quiet_since = max(quiet_since, item["created_at"] + 300)   # agent never reported back
-            if n and now - quiet_since > config.GRACE_SECONDS:
+            if n and now - quiet_since > config.get("GRACE_SECONDS"):
                 short = "" if item["source"] == "manual" or n >= item["expected_photos"] else \
                     f"Only {n} of {item['expected_photos']} photos arrived."
                 _start_processing(item["id"])
@@ -131,6 +141,6 @@ def _watchdog():
 
 def start():
     for item in db.query("SELECT id FROM items WHERE status = 'processing'"):
-        _work.put(item["id"])   # resume after a restart
+        _work.put((item["id"], True, True))   # resume after a restart
     threading.Thread(target=_worker, daemon=True, name="process").start()
     threading.Thread(target=_watchdog, daemon=True, name="watchdog").start()

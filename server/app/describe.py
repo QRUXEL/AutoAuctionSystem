@@ -43,16 +43,16 @@ def _encode(img: Image.Image) -> dict:
 
 def describe(images: list) -> dict:
     """images: PIL images (cropped, unframed). Returns title/description/category/notes."""
-    if not config.ANTHROPIC_API_KEY:
+    if not config.get("ANTHROPIC_API_KEY"):
         return {"title": "", "description": "", "category_id": None, "category_path": "",
-                "ai_notes": "AI description is off: set ANTHROPIC_API_KEY on the server."}
+                "ai_notes": "AI description is off: add a Claude API key under Settings."}
     import anthropic
 
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=config.get("ANTHROPIC_API_KEY"))
     content = [_encode(i) for i in images] + [{"type": "text", "text": "Draft the listing for this item."}]
     msg = client.messages.create(
-        model=config.AI_MODEL, max_tokens=1500,
-        system=SYSTEM.format(language=config.LISTING_LANGUAGE, extra=config.AI_EXTRA_INSTRUCTIONS),
+        model=config.get("AI_MODEL"), max_tokens=1500,
+        system=SYSTEM.format(language=config.get("LISTING_LANGUAGE"), extra=config.get("AI_EXTRA_INSTRUCTIONS")),
         tools=[LISTING_TOOL], tool_choice={"type": "tool", "name": "listing"},
         messages=[{"role": "user", "content": content}],
     )
@@ -64,7 +64,7 @@ def describe(images: list) -> dict:
     if candidates:
         listing = "\n".join(f"{c['id']}: {c['path']}" for c in candidates)
         pick = client.messages.create(
-            model=config.AI_MODEL, max_tokens=200,
+            model=config.get("AI_MODEL"), max_tokens=200,
             tools=[{"name": "pick", "description": "Choose the category.",
                     "input_schema": {"type": "object", "properties": {"category_id": {"type": "integer"}},
                                      "required": ["category_id"]}}],
@@ -77,3 +77,17 @@ def describe(images: list) -> dict:
         if match:
             result.update(category_id=match["id"], category_path=match["path"])
     return result
+
+
+def check() -> dict:
+    """Connection test for the Settings page."""
+    if not config.get("ANTHROPIC_API_KEY"):
+        return {"ok": False, "message": "No API key set"}
+    import anthropic
+    try:
+        client = anthropic.Anthropic(api_key=config.get("ANTHROPIC_API_KEY"))
+        client.messages.create(model=config.get("AI_MODEL"), max_tokens=1,
+                               messages=[{"role": "user", "content": "ping"}])
+        return {"ok": True, "message": f"Key works with {config.get('AI_MODEL')}"}
+    except Exception as exc:
+        return {"ok": False, "message": str(exc)[:400]}

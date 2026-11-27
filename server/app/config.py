@@ -1,6 +1,13 @@
-"""All configuration comes from environment variables (see .env.example)."""
+"""Configuration.
+
+Fixed settings (paths, ports, passwords for the site and the camera) come from
+environment variables. Integration settings (API keys, AI options, capture
+counts) and listing defaults can be edited on the Settings page; those are
+stored in /data/settings.json and take priority over the environment.
+"""
 import json
 import os
+import threading
 from pathlib import Path
 
 DATA = Path(os.getenv("DATA_DIR", "/data"))
@@ -9,10 +16,11 @@ ITEMS = DATA / "items"
 INCOMING = DATA / "incoming"
 for _d in (DATA, ITEMS, INCOMING):
     _d.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = DATA / "settings.json"
 
 # Access
-REVIEW_PASSWORD = os.getenv("REVIEW_PASSWORD", "")      # protects the review page (HTTP Basic, any user name)
-STATION_KEY = os.getenv("STATION_KEY", "")              # shared secret the station agent sends
+REVIEW_PASSWORD = os.getenv("REVIEW_PASSWORD", "")      # protects the site (HTTP Basic, any user name)
+STATION_KEY = os.getenv("STATION_KEY", "")              # shared secret the ESP32 sends
 
 # FTP (the camera uploads here)
 FTP_PORT = int(os.getenv("FTP_PORT", "2121"))
@@ -21,27 +29,26 @@ FTP_PASSWORD = os.getenv("FTP_PASSWORD", "change-me")
 FTP_PASSIVE_PORTS = os.getenv("FTP_PASSIVE_PORTS", "30000-30009")
 FTP_PUBLIC_HOST = os.getenv("FTP_PUBLIC_HOST", "")      # LAN IP of the Docker host, needed for passive mode
 
-# Capture defaults
-EXPECTED_PHOTOS = int(os.getenv("EXPECTED_PHOTOS", "4"))
-EXPECTED_VIDEOS = int(os.getenv("EXPECTED_VIDEOS", "1"))
-GRACE_SECONDS = int(os.getenv("GRACE_SECONDS", "45"))   # wait this long for missing photos before processing anyway
-
-# AI
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "claude-sonnet-5-5")
-LISTING_LANGUAGE = os.getenv("LISTING_LANGUAGE", "Swedish")
-AI_EXTRA_INSTRUCTIONS = os.getenv("AI_EXTRA_INSTRUCTIONS", "")
-
-# Tradera
 TRADERA_BASE = os.getenv("TRADERA_BASE", "https://api.tradera.com")
-TRADERA_APP_ID = os.getenv("TRADERA_APP_ID", "")
-TRADERA_APP_KEY = os.getenv("TRADERA_APP_KEY", "")
-TRADERA_USER_ID = os.getenv("TRADERA_USER_ID", "")
-TRADERA_USER_TOKEN = os.getenv("TRADERA_USER_TOKEN", "")
-TRADERA_DRY_RUN = os.getenv("TRADERA_DRY_RUN", "1") != "0"
 
-# Listing defaults; editable per item on the review page, or globally in /data/settings.json
-DEFAULT_SETTINGS = {
+# Editable on the Settings page. name -> (type, default from the environment)
+EDITABLE = {
+    "ANTHROPIC_API_KEY": ("secret", os.getenv("ANTHROPIC_API_KEY", "")),
+    "AI_MODEL": ("str", os.getenv("AI_MODEL", "claude-sonnet-5-5")),
+    "LISTING_LANGUAGE": ("str", os.getenv("LISTING_LANGUAGE", "Swedish")),
+    "AI_EXTRA_INSTRUCTIONS": ("str", os.getenv("AI_EXTRA_INSTRUCTIONS", "")),
+    "TRADERA_APP_ID": ("str", os.getenv("TRADERA_APP_ID", "")),
+    "TRADERA_APP_KEY": ("secret", os.getenv("TRADERA_APP_KEY", "")),
+    "TRADERA_USER_ID": ("str", os.getenv("TRADERA_USER_ID", "")),
+    "TRADERA_USER_TOKEN": ("secret", os.getenv("TRADERA_USER_TOKEN", "")),
+    "TRADERA_DRY_RUN": ("bool", os.getenv("TRADERA_DRY_RUN", "1") != "0"),
+    "EXPECTED_PHOTOS": ("int", int(os.getenv("EXPECTED_PHOTOS", "4"))),
+    "EXPECTED_VIDEOS": ("int", int(os.getenv("EXPECTED_VIDEOS", "1"))),
+    "GRACE_SECONDS": ("int", int(os.getenv("GRACE_SECONDS", "45"))),
+}
+
+# Listing defaults; also editable per item on the item page
+DEFAULT_LISTING = {
     "item_type": 1,              # 1 = auction, 3 = fixed price
     "duration_days": 7,
     "start_price": 1,
@@ -50,17 +57,85 @@ DEFAULT_SETTINGS = {
     "vat": None,
     "shipping_condition": "",
     "shipping_options": [],      # e.g. [{"shippingProviderId": 0, "cost": 69}] from /v4/reference-data/shipping-options
-    "description_footer": "",    # appended to every description (e.g. info about the auction)
+    "description_footer": "",    # appended to every description
 }
+
+_lock = threading.Lock()
+
+
+def _load() -> dict:
+    if SETTINGS_FILE.exists():
+        return json.loads(SETTINGS_FILE.read_text("utf-8"))
+    return {}
+
+
+def _save(data: dict):
+    tmp = SETTINGS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(SETTINGS_FILE)
+
+
+def get(name: str):
+    kind, default = EDITABLE[name]
+    stored = _load().get("integrations", {}).get(name)
+    return default if stored is None else stored
+
+
+def source(name: str) -> str:
+    """Where the current value comes from: 'settings', 'env' or 'none'."""
+    if _load().get("integrations", {}).get(name) is not None:
+        return "settings"
+    return "env" if EDITABLE[name][1] not in ("", None) else "none"
+
+
+def _coerce(name: str, value):
+    kind = EDITABLE[name][0]
+    if value is None:
+        return None
+    if kind == "bool":
+        return bool(value)
+    if kind == "int":
+        return int(value)
+    return str(value).strip()
+
+
+def update_integrations(values: dict):
+    """values: name -> new value; None removes the stored value (falls back to the environment)."""
+    with _lock:
+        data = _load()
+        integ = data.setdefault("integrations", {})
+        for name, value in values.items():
+            if name not in EDITABLE:
+                raise KeyError(name)
+            v = _coerce(name, value)
+            if v is None:
+                integ.pop(name, None)
+            else:
+                integ[name] = v
+        _save(data)
 
 
 def settings() -> dict:
-    merged = dict(DEFAULT_SETTINGS)
-    path = DATA / "settings.json"
-    if path.exists():
-        merged.update(json.loads(path.read_text("utf-8")))
+    """Listing defaults."""
+    merged = dict(DEFAULT_LISTING)
+    data = _load()
+    merged.update({k: v for k, v in data.items() if k in DEFAULT_LISTING})
     return merged
 
 
+def update_listing(values: dict):
+    with _lock:
+        data = _load()
+        for k, v in values.items():
+            if k in DEFAULT_LISTING:
+                data[k] = v
+        _save(data)
+
+
 def tradera_ready() -> bool:
-    return all((TRADERA_APP_ID, TRADERA_APP_KEY, TRADERA_USER_ID, TRADERA_USER_TOKEN))
+    return all(get(k) for k in ("TRADERA_APP_ID", "TRADERA_APP_KEY", "TRADERA_USER_ID", "TRADERA_USER_TOKEN"))
+
+
+def dry_run() -> bool:
+    return bool(get("TRADERA_DRY_RUN")) or not tradera_ready()

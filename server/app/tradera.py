@@ -21,9 +21,9 @@ class TraderaError(RuntimeError):
 
 def _session(user: bool = True) -> requests.Session:
     s = requests.Session()
-    s.headers.update({"X-App-Id": config.TRADERA_APP_ID, "X-App-Key": config.TRADERA_APP_KEY, "Accept": "application/json"})
+    s.headers.update({"X-App-Id": config.get("TRADERA_APP_ID"), "X-App-Key": config.get("TRADERA_APP_KEY"), "Accept": "application/json"})
     if user:
-        s.headers.update({"X-User-Id": config.TRADERA_USER_ID, "X-User-Token": config.TRADERA_USER_TOKEN})
+        s.headers.update({"X-User-Id": config.get("TRADERA_USER_ID"), "X-User-Token": config.get("TRADERA_USER_TOKEN")})
     return s
 
 
@@ -96,7 +96,7 @@ def categories() -> list:
     cache_file = config.DATA / "categories.json"
     if cache_file.exists() and time.time() - cache_file.stat().st_mtime < 86400:
         flat = json.loads(cache_file.read_text("utf-8"))
-    elif config.TRADERA_APP_ID and config.TRADERA_APP_KEY:
+    elif config.get("TRADERA_APP_ID") and config.get("TRADERA_APP_KEY"):
         tree = _call(_session(user=False), "GET", "/v4/categories")
         flat = []
 
@@ -127,3 +127,28 @@ def search_categories(terms: list, limit: int = 40) -> list:
             scored.append((score, c))
     scored.sort(key=lambda sc: (-sc[0], len(sc[1]["path"])))
     return [c for _, c in scored[:limit]]
+
+
+def check() -> dict:
+    """Connection test for the Settings page: app keys, then the seller's user token."""
+    out = {"app": None, "user": None}
+    if not (config.get("TRADERA_APP_ID") and config.get("TRADERA_APP_KEY")):
+        out["app"] = {"ok": False, "message": "App ID and app key are not set"}
+        return out
+    try:
+        tree = _call(_session(user=False), "GET", "/v4/categories")
+        out["app"] = {"ok": True, "message": f"App keys work ({len(tree or [])} top-level categories)"}
+        _cache.update(at=0.0, flat=[])           # reload categories with the new keys
+        (config.DATA / "categories.json").unlink(missing_ok=True)
+    except Exception as exc:
+        out["app"] = {"ok": False, "message": str(exc)}
+        return out
+    if not (config.get("TRADERA_USER_ID") and config.get("TRADERA_USER_TOKEN")):
+        out["user"] = {"ok": False, "message": "User ID and user token are not set"}
+        return out
+    try:
+        _call(_session(), "GET", "/v4/users/me/payment-options")
+        out["user"] = {"ok": True, "message": "User token works"}
+    except Exception as exc:
+        out["user"] = {"ok": False, "message": str(exc)}
+    return out

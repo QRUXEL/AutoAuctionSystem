@@ -39,14 +39,23 @@ CREATE TABLE IF NOT EXISTS files (
   seq INTEGER NOT NULL,
   raw TEXT NOT NULL,               -- paths relative to the items directory
   framed TEXT DEFAULT '',
-  received_at REAL NOT NULL
+  received_at REAL NOT NULL,
+  crop TEXT DEFAULT '',            -- manual crop as JSON {x,y,w,h} fractions of the upright photo, or ''
+  crop_auto TEXT DEFAULT ''        -- the automatic crop last used, same format
 );
 """
+
+MIGRATIONS = {"files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''"}}
 
 
 def init():
     with _lock:
         _conn.executescript(SCHEMA)
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in _conn.execute(f"PRAGMA table_info({table})")}
+            for col, decl in cols.items():
+                if col not in have:
+                    _conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         _conn.commit()
 
 

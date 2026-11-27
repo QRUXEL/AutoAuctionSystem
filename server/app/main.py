@@ -6,16 +6,17 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, ftp, ingest, tradera
+from . import config, db, describe, ftp, imaging, ingest, tradera
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
-STATIC = Path(__file__).parent / "static"
-EDITABLE = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days"}
+WEB = Path(__file__).parent / "static"          # the built React app (see web/)
+EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days"}
+STATUSES = ("capturing", "processing", "review", "publishing", "published", "error")
 
 
 @asynccontextmanager
@@ -47,10 +48,25 @@ async def auth(request: Request, call_next):
     return await call_next(request)
 
 
+# ---- items -------------------------------------------------------------------
+def _url(rel: str) -> str | None:
+    if not rel:
+        return None
+    path = config.ITEMS / rel
+    v = int(path.stat().st_mtime) if path.exists() else 0
+    return f"/media/{rel}?v={v}"
+
+
 def item_json(item: dict) -> dict:
     files = db.query("SELECT * FROM files WHERE item_id = ? ORDER BY kind, seq", item["id"])
-    item["photos"] = [{"seq": f["seq"], "framed": f"/media/{f['framed']}" if f["framed"] else None,
-                       "raw": f"/media/{f['raw']}"} for f in files if f["kind"] == "photo"]
+    item["photos"] = [{
+        "seq": f["seq"],
+        "framed": _url(f["framed"]),
+        "raw": f"/media/{f['raw']}",
+        "preview": f"/api/items/{item['id']}/photos/{f['seq']}/preview",
+        "crop": json.loads(f["crop"] or f["crop_auto"] or "null"),
+        "manual_crop": bool(f["crop"]),
+    } for f in files if f["kind"] == "photo"]
     item["videos"] = [f"/media/{f['raw']}" for f in files if f["kind"] == "video"]
     return item
 
@@ -62,34 +78,47 @@ def get_item(item_id: int) -> dict:
     return item
 
 
+def get_photo(item_id: int, seq: int) -> dict:
+    f = db.one("SELECT * FROM files WHERE item_id = ? AND kind = 'photo' AND seq = ?", item_id, seq)
+    if not f:
+        raise HTTPException(404, "No such photo")
+    return f
+
+
+def editable(item: dict):
+    if item["status"] in ("publishing", "published", "processing", "capturing"):
+        raise HTTPException(409, f"Item is {item['status']}")
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
 
 
-@app.get("/")
-def index():
-    return FileResponse(STATIC / "index.html")
-
-
 @app.get("/api/info")
 def info():
-    return {"tradera_ready": config.tradera_ready(), "dry_run": config.TRADERA_DRY_RUN or not config.tradera_ready(),
-            "ai_ready": bool(config.ANTHROPIC_API_KEY), "settings": config.settings()}
+    counts = {s: 0 for s in STATUSES}
+    for row in db.query("SELECT status, COUNT(*) AS n FROM items GROUP BY status"):
+        counts[row["status"]] = row["n"]
+    return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(),
+            "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
+            "counts": counts}
 
 
 @app.get("/api/items")
 def list_items(status: str = ""):
-    if status:
-        rows = db.query("SELECT * FROM items WHERE status = ? ORDER BY id DESC LIMIT 300", status)
+    statuses = [s for s in status.split(",") if s]
+    if statuses:
+        marks = ",".join("?" * len(statuses))
+        rows = db.query(f"SELECT * FROM items WHERE status IN ({marks}) ORDER BY id DESC LIMIT 500", *statuses)
     else:
-        rows = db.query("SELECT * FROM items ORDER BY id DESC LIMIT 300")
+        rows = db.query("SELECT * FROM items ORDER BY id DESC LIMIT 500")
     return [item_json(r) for r in rows]
 
 
 @app.post("/api/items")
 async def open_item(request: Request):
-    """Called by the station agent just before it starts shooting."""
+    """Called by the station controller just before it starts shooting."""
     body = await request.json() if await request.body() else {}
     return {"id": ingest.open_item("station", body.get("photos"), body.get("videos"))}
 
@@ -107,21 +136,18 @@ def read_item(item_id: int):
 
 
 @app.patch("/api/items/{item_id}")
-async def patch_item(item_id: int, request: Request):
-    get_item(item_id)
-    body = await request.json()
+def patch_item(item_id: int, body: dict = Body(...)):
+    editable(get_item(item_id))
     fields = {k: (v if v != "" or k in ("title", "description", "category_path") else None)
-              for k, v in body.items() if k in EDITABLE}
+              for k, v in body.items() if k in EDITABLE_ITEM}
     db.update_item(item_id, **fields)
     return item_json(get_item(item_id))
 
 
 @app.post("/api/items/{item_id}/regenerate")
-def regenerate(item_id: int):
-    item = get_item(item_id)
-    if item["status"] in ("publishing", "published"):
-        raise HTTPException(409, "Already published")
-    ingest.reprocess(item_id)
+def regenerate(item_id: int, body: dict = Body(default={})):
+    editable(get_item(item_id))
+    ingest.reprocess(item_id, photos=bool(body.get("photos", True)), text=bool(body.get("text", True)))
     return {"ok": True}
 
 
@@ -135,18 +161,51 @@ def delete_item(item_id: int):
     return {"ok": True}
 
 
+@app.get("/api/items/{item_id}/photos/{seq}/preview")
+def photo_preview(item_id: int, seq: int):
+    f = get_photo(item_id, seq)
+    out = config.ITEMS / str(item_id) / "preview" / f"{seq:02d}.jpg"
+    if not out.exists():
+        imaging.preview(config.ITEMS / f["raw"], out)
+    return FileResponse(out, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.put("/api/items/{item_id}/photos/{seq}/crop")
+def set_crop(item_id: int, seq: int, body: dict = Body(...)):
+    editable(get_item(item_id))
+    f = get_photo(item_id, seq)
+    try:
+        crop = {k: float(body[k]) for k in ("x", "y", "w", "h")}
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "Crop needs x, y, w and h as fractions of the photo")
+    if not (0 <= crop["x"] < 1 and 0 <= crop["y"] < 1 and 0 < crop["w"] <= 1.0001 and 0 < crop["h"] <= 1.0001):
+        raise HTTPException(422, "Crop is outside the photo")
+    db.run("UPDATE files SET crop = ? WHERE id = ?", json.dumps(crop), f["id"])
+    ingest.frame_one(get_photo(item_id, seq))
+    return item_json(get_item(item_id))
+
+
+@app.delete("/api/items/{item_id}/photos/{seq}/crop")
+def reset_crop(item_id: int, seq: int):
+    editable(get_item(item_id))
+    f = get_photo(item_id, seq)
+    db.run("UPDATE files SET crop = '' WHERE id = ?", f["id"])
+    ingest.frame_one(get_photo(item_id, seq))
+    return item_json(get_item(item_id))
+
+
 def _publish(item_id: int):
     item = get_item(item_id)
     photos = db.query("SELECT framed FROM files WHERE item_id = ? AND kind = 'photo' ORDER BY seq", item_id)
     paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]]
     settings = config.settings()
     try:
-        if config.TRADERA_DRY_RUN or not config.tradera_ready():
+        if config.dry_run():
             payload = tradera.build_payload(item, settings)
             (config.ITEMS / str(item_id) / "tradera_payload.json").write_text(
                 json.dumps({"payload": payload, "images": [p.name for p in paths]}, ensure_ascii=False, indent=2), "utf-8")
             db.update_item(item_id, status="review",
-                           message="Dry run: nothing was sent to Tradera. The payload is saved next to the photos.")
+                           message="Dry run: nothing was sent to Tradera. The request is saved next to the photos.")
             return
         result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m))
         db.update_item(item_id, status="published", message="", published_at=db.now(),
@@ -179,4 +238,68 @@ def categories(q: str = ""):
         return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+# ---- settings ------------------------------------------------------------------
+def _hint(value: str) -> str:
+    return "…" + value[-4:] if len(value) > 8 else "set"
+
+
+@app.get("/api/settings")
+def read_settings():
+    values, secrets = {}, {}
+    for name, (kind, _default) in config.EDITABLE.items():
+        value = config.get(name)
+        if kind == "secret":
+            secrets[name] = {"set": bool(value), "hint": _hint(value) if value else "", "source": config.source(name)}
+        else:
+            values[name] = value
+    return {"values": values, "secrets": secrets, "listing": config.settings()}
+
+
+@app.put("/api/settings")
+def write_settings(body: dict = Body(...)):
+    changes = {}
+    for name, value in (body.get("values") or {}).items():
+        if name not in config.EDITABLE or config.EDITABLE[name][0] == "secret":
+            raise HTTPException(422, f"Unknown setting {name}")
+        changes[name] = value
+    for name, value in (body.get("secrets") or {}).items():
+        if config.EDITABLE.get(name, ("",))[0] != "secret":
+            raise HTTPException(422, f"Unknown secret {name}")
+        changes[name] = value if value else None          # empty / null = remove, fall back to the environment
+    try:
+        config.update_integrations(changes)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc))
+    listing = body.get("listing") or {}
+    if "shipping_options" in listing and not isinstance(listing["shipping_options"], list):
+        raise HTTPException(422, "shipping_options must be a list")
+    config.update_listing(listing)
+    return read_settings()
+
+
+@app.post("/api/settings/test/{what}")
+def test_settings(what: str):
+    if what == "claude":
+        return describe.check()
+    if what == "tradera":
+        return tradera.check()
+    raise HTTPException(404)
+
+
+# ---- files and the web app -------------------------------------------------------
 app.mount("/media", StaticFiles(directory=config.ITEMS), name="media")
+if (WEB / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="assets")
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def spa(path: str):
+    if path.startswith(("api/", "media/")):
+        raise HTTPException(404)
+    target = WEB / path
+    if path and target.is_file() and WEB in target.resolve().parents:
+        return FileResponse(target)
+    index = WEB / "index.html"
+    if not index.exists():
+        return Response("The web app is not built. Run npm run build in server/web.", status_code=503)
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})

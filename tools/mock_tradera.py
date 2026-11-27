@@ -29,6 +29,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.headers.get("X-App-Id"):
             return self._send({"error": "no app id"}, 401)
+        if self.path.startswith("/v4/users/me/payment-options"):
+            return self._send([]) if self.headers.get("X-User-Token") else self._send({"error": "no user token"}, 401)
         if self.path.startswith("/v4/categories"):
             return self._send(CATEGORIES)
         if self.path.startswith("/v4/listings/request-results"):

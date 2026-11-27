@@ -1,0 +1,5 @@
+web/node_modules
+app/static
+data
+**/__pycache__
+.env

@@ -91,10 +91,11 @@ def subject_box(img: Image.Image, threshold: int):
     return tuple(v / scale for v in box)
 
 
-def crop_photo(img: Image.Image, aspect: float, crop_cfg: dict) -> Image.Image:
+def auto_box(img: Image.Image, aspect: float, crop_cfg: dict):
+    """Pixel box (l, t, r, b) the automatic crop would use, or None for mode 'none'."""
     mode = crop_cfg.get("mode", "auto")
     if mode == "none":
-        return img
+        return None
     box = subject_box(img, crop_cfg.get("threshold", 28)) if mode == "auto" else None
     if box:
         pad = 1 + 2 * crop_cfg.get("padding", 0.12)
@@ -102,8 +103,21 @@ def crop_photo(img: Image.Image, aspect: float, crop_cfg: dict) -> Image.Image:
         w, h = (box[2] - box[0]) * pad, (box[3] - box[1]) * pad
     else:
         cx, cy = img.width / 2, img.height / 2   # largest centred crop
-        w, h =(img.width, img.width / aspect) if img.width / img.height < aspect else (img.height * aspect, img.height)
-    return img.crop(_fit_box(cx, cy, w, h, aspect, img.width, img.height))
+        w, h = (img.width, img.width / aspect) if img.width / img.height < aspect else (img.height * aspect, img.height)
+    return _fit_box(cx, cy, w, h, aspect, img.width, img.height)
+
+
+def to_fractions(box, img) -> dict:
+    l, t, r, b = box
+    return {"x": l / img.width, "y": t / img.height, "w": (r - l) / img.width, "h": (b - t) / img.height}
+
+
+def from_fractions(f: dict, img):
+    l = max(0.0, min(1.0, f["x"])) * img.width
+    t = max(0.0, min(1.0, f["y"])) * img.height
+    r = min(img.width, l + max(0.001, f["w"]) * img.width)
+    b = min(img.height, t + max(0.001, f["h"]) * img.height)
+    return round(l), round(t), round(r), round(b)
 
 
 def photo_area(cfg: dict):
@@ -112,28 +126,49 @@ def photo_area(cfg: dict):
     return b, b, cw - b, ch - cfg["footer_height"] - (0 if cfg["footer_height"] else b)
 
 
+def photo_aspect(cfg: dict | None = None) -> float:
+    l, t, r, b = photo_area(cfg or frame_config())
+    return (r - l) / (b - t)
+
+
 def load(path: Path) -> Image.Image:
     return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
 
 
-def cropped(path: Path, cfg: dict | None = None) -> Image.Image:
+def cropped(path: Path, cfg: dict | None = None, manual: dict | None = None):
+    """Returns (cropped image, crop box as fractions or None when not cropped)."""
     cfg = cfg or frame_config()
-    l, t, r, b = photo_area(cfg)
-    return crop_photo(load(path), (r - l) / (b - t), cfg["crop"])
+    img = load(path)
+    box = from_fractions(manual, img) if manual else auto_box(img, photo_aspect(cfg), cfg["crop"])
+    if box is None:
+        return img, None
+    return img.crop(box), to_fractions(box, img)
 
 
-def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = None) -> Path:
+def preview(path: Path, out: Path, size: int = 2000) -> Path:
+    """Upright, downscaled copy for the crop tool."""
+    img = load(path)
+    img.thumbnail((size, size), Image.LANCZOS)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out, "JPEG", quality=85)
+    return out
+
+
+def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = None, manual: dict | None = None):
+    """Writes the framed photo. Returns the crop used as fractions (None if the photo was not cropped)."""
     cfg = cfg or frame_config()
     cw, ch = cfg["canvas"]
     l, t, r, b = photo_area(cfg)
     canvas = Image.new("RGB", (cw, ch), cfg["border_color"])
     canvas.paste(Image.new("RGB", (r - l, b - t), cfg["background"]), (l, t))
-    photo = cropped(path, cfg)
-    if cfg["crop"].get("mode") == "none":
+    photo, used = cropped(path, cfg, manual)
+    if used is None:
         photo = ImageOps.contain(photo, (r - l, b - t), Image.LANCZOS)
         canvas.paste(photo, (l + (r - l - photo.width) // 2, t + (b - t - photo.height) // 2))
     else:
-        canvas.paste(photo.resize((r - l, b - t), Image.LANCZOS), (l, t))
+        # A manual crop may not match the frame's shape exactly; fit it without distortion.
+        fitted = ImageOps.fit(photo, (r - l, b - t), Image.LANCZOS)
+        canvas.paste(fitted, (l, t))
 
     draw = ImageDraw.Draw(canvas)
     fh = cfg["footer_height"]
@@ -170,4 +205,4 @@ def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = No
 
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out, "JPEG", quality=90, optimize=True)
-    return out
+    return used

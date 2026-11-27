@@ -12,3 +12,8 @@ __pycache__/
 # local server data
 server/data/
 data/
+
+# web app: dependencies and build output (built inside the Docker image)
+server/web/node_modules/
+server/app/static/
+server/web/*.tsbuildinfo
