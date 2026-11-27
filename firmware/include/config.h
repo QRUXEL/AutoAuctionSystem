@@ -18,6 +18,20 @@
 #define BUTTON_PIN     0      // BOOT button; wire a big button between this pin and GND
 #define LED_RGB_PIN    48     // on-board RGB LED (38 on some DevKitC v1.1 boards); -1 for none
 
+// ---- Bluetooth ----
+// Only use this camera (lowercase address from GET /devices); "" = the first Sony camera seen.
+// Set it when more than one Sony camera is in range.
+#define CAMERA_ADDRESS "9c:50:d1:c4:bb:ea"   // ILCE-7M4
+
+// ---- clock (for setting the camera's date and time) ----
+#define NTP_SERVER     "pool.ntp.org"
+#define TIMEZONE       "CET-1CEST,M3.5.0,M10.5.0/3"   // POSIX TZ: Sweden / Central Europe with summer time
+// The camera takes the time together with a location (as from Sony's phone app). Leave both 0 to
+// send the time only: the station then switches the camera's location link off again right after,
+// so photos are not tagged with 0,0.
+#define STATION_LAT    0.0
+#define STATION_LON    0.0
+
 // ---- capture sequence ----
 #define PHOTOS                4
 #define RECORD_VIDEO          1      // 1 = film one full turn after the photos

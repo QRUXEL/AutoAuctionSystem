@@ -48,6 +48,16 @@ void HeadOne::onNotify(Ch ch, const uint8_t *d, size_t n) {
       status_ = s;
       battery_ = s.battery;
     } else if (ek::parsePanDeg(d, n, ek::CURRENT_POSITION, pan)) {
+      if (havePan_) {                        // follow the table through every reading
+        double step = pan - pan_;
+        while (step > 180) step -= 360;
+        while (step < -180) step += 360;
+        table_ = table_ + step / tuning.headPerTable * (tuning.clockwise ? 1 : -1);
+      } else if (!isnan(zeroPan_)) {         // first reading: place the table against the saved zero mark
+        table_ = (pan - zeroPan_) / tuning.headPerTable * (tuning.clockwise ? 1 : -1);
+        zero_ = 0;
+      }
+      havePan_ = true;
       pan_ = pan;
     }
   } else {
@@ -75,6 +85,7 @@ bool HeadOne::connect(const NimBLEAddress &address, const std::string &adv, Stri
     client_->setConnectTimeout(10);
   }
   write_[DATA] = write_[IOCTL] = read_[DATA] = read_[IOCTL] = nullptr;
+  havePan_ = false;                          // the head may have been moved by hand while away
   if (!client_->connect(address)) {
     err = "HeadONE found but would not connect (is the edelkrone app connected to it?)";
     return false;
@@ -160,9 +171,19 @@ static float wrap180(double d) {
   return (float)d;
 }
 
+float HeadOne::angle() const {
+  double a = fmod(table_ - zero_, 360.0);
+  return (float)(a < 0 ? a + 360 : a);
+}
+
+bool HeadOne::drive(float speed) {
+  return exchange(DATA, ek::manualPanTilt((tuning.clockwise ? 1 : -1) * speed, 0), ek::R_GENERAL_STATUS, 300);
+}
+
 bool HeadOne::turnBy(float tableDeg, float speed, volatile bool &abort, String &err) {
-  const float target = tableDeg * HEAD_DEG_PER_TABLE_DEG;
-  const float dir = TABLE_CLOCKWISE ? 1.0f : -1.0f;
+  const Tuning t = tuning;
+  const float target = fabsf(tableDeg) * t.headPerTable;
+  const float dir = (t.clockwise ? 1.0f : -1.0f) * (tableDeg < 0 ? -1.0f : 1.0f);
   double last;
   if (!readPan(last)) {
     err = "no position reading before the turn";
@@ -171,11 +192,11 @@ bool HeadOne::turnBy(float tableDeg, float speed, volatile bool &abort, String &
   float travelled = 0;
   uint32_t lastProgress = millis(), lastRead = 0;
   bool ok = true;
-  while (travelled < target - STOP_EARLY_DEG) {
+  while (travelled < target - t.stopEarly) {
     if (abort) { err = "stopped by request"; ok = false; break; }
     if (!connected()) { err = "HeadONE disconnected during the turn"; ok = false; break; }
     float remaining = target - travelled;
-    float v = remaining > SLOW_ZONE_DEG ? speed : max(MIN_TURN_SPEED, speed * remaining / SLOW_ZONE_DEG);
+    float v = remaining > t.slowZone ? speed : max(t.minSpeed, speed * remaining / t.slowZone);
     // The head answers each joystick command with a status frame; a missed answer is not fatal.
     exchange(DATA, ek::manualPanTilt(dir * v, 0), ek::R_GENERAL_STATUS, 400);
     if (millis() - lastRead >= 150) {        // the SDK reads the position every 150 ms while driving
@@ -188,7 +209,7 @@ bool HeadOne::turnBy(float tableDeg, float speed, volatile bool &abort, String &
         travelled += step * dir;
       }
     }
-    if (millis() - lastProgress > STALL_TIMEOUT_MS) {
+    if (millis() - lastProgress > t.stallMs) {
       err = "turntable is not moving (blocked, switched off or out of battery?)";
       ok = false;
       break;

@@ -6,7 +6,7 @@ Import("env")  # noqa: F821  (provided by PlatformIO)
 def merge_bin(source, target, env):
     out = env.subst("$BUILD_DIR/auction-station-full.bin")
     images = [str(x) for x in env.Flatten(env.get("FLASH_EXTRA_IMAGES", []))]
-    images += [env.subst("$ESP32_APP_OFFSET"), source[0].get_abspath()]
+    images += [env.subst("$ESP32_APP_OFFSET"), target[0].get_abspath()]  # the app .bin (source[0] is the .elf)
     quoted = [f'"{env.subst(p)}"' for p in images]
     cmd = ['"$PYTHONEXE"', '"$OBJCOPY"', "--chip", env.BoardConfig().get("build.mcu", "esp32s3"),
            "merge_bin", "-o", f'"{out}"', "--flash_mode", "dio",

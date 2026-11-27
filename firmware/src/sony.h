@@ -13,6 +13,11 @@ class SonyRemote {
   bool connected();
   bool takePhoto();
   bool toggleRecord();
+  // Press (true) or release (false) the remote's C1 button, which works as the camera's C1 key.
+  // With Recall Custom Hold on C1, the camera uses the saved settings while it is held.
+  bool holdC1(bool down);
+  // Sets the camera's date and time (and location) over the location service, like Sony's app.
+  bool setClock(time_t now, String &err);
 
  private:
   bool send(uint8_t a, uint8_t b);
