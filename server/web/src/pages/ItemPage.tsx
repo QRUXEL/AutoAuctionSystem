@@ -14,6 +14,7 @@ import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
 import { PhotoGrid } from '../components/PhotoGrid';
+import { AttributeFields, type Attributes } from '../components/AttributeFields';
 import { watchSend } from '../watchSend';
 import { BidderSelect, bidderName, ShippingPicker } from '../components/ShippingPicker';
 import { AdjustModal } from '../components/AdjustModal';
@@ -30,6 +31,7 @@ interface Form {
   end_at: string;
   shipping: Item['shipping_options'] | null;      // null = the defaults in Settings
   bidders: number | null;                          // null = the default in Settings
+  attributes: Attributes;                          // category attributes, e.g. Skick
 }
 
 const toForm = (i: Item): Form => ({
@@ -42,6 +44,7 @@ const toForm = (i: Item): Form => ({
   end_at: i.end_at ?? '',
   shipping: i.shipping_override ? i.shipping_options : null,
   bidders: i.accepted_bidder_override ?? null,
+  attributes: (() => { try { return JSON.parse(i.attributes || '{}') as Attributes; } catch { return {}; } })(),
 });
 
 const BUSY = ['capturing', 'processing', 'publishing'];
@@ -88,7 +91,7 @@ export function ItemPage() {
       method: 'PATCH',
       body: {
         title: form.title, description: form.description,
-        category_id: form.category.id, category_path: form.category.path,
+        category_id: form.category.id, category_path: form.category.path, attributes: form.attributes,
         start_price: form.start_price, buy_now_price: form.buy_now_price, duration_days: Number(form.duration_days),
         end_at: form.end_at, shipping_override: form.shipping, accepted_bidder_override: form.bidders,
       },
@@ -313,6 +316,7 @@ export function ItemPage() {
               </Anchor>
             )}
             <CategorySelect value={form.category} onChange={(v) => set('category', v)} disabled={locked} traderaReady={!!info?.tradera_ready || !info?.dry_run} />
+            <AttributeFields categoryId={form.category.id} value={form.attributes} disabled={locked} onChange={(v) => set('attributes', v)} />
             <Group grow align="flex-start">
               <NumberInput label="Start price" suffix=" kr" min={1} allowDecimal={false} value={form.start_price} disabled={locked}
                 onChange={(v) => set('start_price', v)} />

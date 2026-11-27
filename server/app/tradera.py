@@ -74,6 +74,9 @@ def build_payload(item: dict, settings: dict, video_url: str | None = None, end_
         payload["vat"] = settings["vat"]
     if (settings.get("campaign_code") or "").strip():
         payload["campaignCode"] = settings["campaign_code"].strip()
+    attrs = attribute_payload(item)
+    if attrs:
+        payload["attributeValues"] = attrs
     return payload
 
 
@@ -267,6 +270,67 @@ def shipping_products(from_country: str = "SE") -> list:
         out.sort(key=lambda p: (p["provider"].lower(), p["weight"] or 0, p["price"] or 0))
         return out
     return _cached(f"shipping-{from_country}", fetch, user=True)
+
+
+CONDITION = re.compile(r"skick|condition", re.IGNORECASE)
+
+
+def attribute_definitions(category_id: int) -> list:
+    """A category's attributes (GET /v4/categories/{id}/attribute-definitions), cached a day:
+    [{id, name, key, type, min, max, values, condition}] - 'condition' marks the Skick attribute."""
+    def fetch(s):
+        raw = _call(s, "GET", f"/v4/categories/{int(category_id)}/attribute-definitions") or []
+        if isinstance(raw, dict):
+            raw = raw.get("attributeDefinitions") or raw.get("items") or raw.get("attributes") or []
+        out = []
+        for a in raw:
+            kind = (a.get("attributeType") or "").lower()
+            out.append({"id": a.get("id"), "name": a.get("name") or a.get("key") or f"Attribute {a.get('id')}",
+                        "key": a.get("key") or "", "description": a.get("description") or "",
+                        "type": "number" if "number" in kind or "numeric" in kind else "term",
+                        "min": a.get("minNumberOfValues") or 0, "max": a.get("maxNumberOfValues") or 0,
+                        "values": a.get("possibleTermValues") or [], "formatting": a.get("valueFormatting") or "",
+                        "condition": bool(CONDITION.search(f"{a.get('key')} {a.get('name')}"))})
+        out.sort(key=lambda a: (not a["condition"], a["min"] == 0, a["name"].lower()))
+        return out
+    return _cached(f"attributes-{int(category_id)}", fetch)
+
+
+def attribute_payload(item: dict) -> dict | None:
+    """The item's chosen attributes as Tradera's attributeValues {terms, numbers}, for its current category."""
+    try:
+        chosen = json.loads(item.get("attributes") or "{}")
+    except ValueError:
+        return None
+    if not chosen or not item.get("category_id"):
+        return None
+    try:
+        defs = {str(a["id"]): a for a in attribute_definitions(item["category_id"])}
+    except Exception:
+        return None
+    terms, numbers = [], []
+    for aid, values in chosen.items():
+        d = defs.get(str(aid))
+        if not d or not values:
+            continue                              # an attribute of another category: left out
+        if d["type"] == "number":
+            numbers.append({"id": int(aid), "values": [float(v) for v in values]})
+        else:
+            terms.append({"id": int(aid), "values": [str(v) for v in values if not d["values"] or v in d["values"]]})
+    out = {k: v for k, v in (("terms", [t for t in terms if t["values"]]), ("numbers", numbers)) if v}
+    return out or None
+
+
+def missing_attributes(item: dict) -> list:
+    """Names of attributes the category requires that the item hasn't got."""
+    if not item.get("category_id"):
+        return []
+    try:
+        defs = attribute_definitions(item["category_id"])
+        chosen = json.loads(item.get("attributes") or "{}")
+    except Exception:
+        return []
+    return [d["name"] for d in defs if d["min"] > 0 and not chosen.get(str(d["id"]))]
 
 
 PICKUP = re.compile(r"h[äa]mt|pick.?up|avh[äa]mt|upph[äa]mt|collect", re.IGNORECASE)

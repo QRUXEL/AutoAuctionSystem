@@ -29,6 +29,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.headers.get("X-App-Id"):
             return self._send({"error": "no app id"}, 401)
+        if self.path.startswith("/v4/categories/") and self.path.endswith("/attribute-definitions"):
+            return self._send([
+                {"id": 1001, "name": "Skick", "key": "condition", "attributeType": "Term", "minNumberOfValues": 1, "maxNumberOfValues": 1,
+                 "possibleTermValues": ["Ny med etikett", "Oanvänd", "Mycket gott skick", "Gott skick", "Okej skick", "Defekt"]},
+                {"id": 2002, "name": "Färg", "key": "color", "attributeType": "Term", "minNumberOfValues": 0, "maxNumberOfValues": 2,
+                 "possibleTermValues": ["Blå", "Röd", "Svart", "Vit"]},
+                {"id": 3003, "name": "Bredd", "key": "width_cm", "attributeType": "Number", "minNumberOfValues": 0, "maxNumberOfValues": 1,
+                 "possibleTermValues": None, "valueFormatting": "cm"}])
         if self.path.startswith("/v4/items/"):
             # each read moves the bidding on: a new bid every second read, by alternating bidders
             iid = int(self.path.split("/")[3].split("?")[0])
@@ -112,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
                   "campaign:", STATE["requests"][rid]["item"].get("campaignCode"),
                   "ends:", STATE["requests"][rid]["item"].get("customEndDate"), "duration:", STATE["requests"][rid]["item"].get("duration"),
                   "bidders:", STATE["requests"][rid]["item"].get("acceptedBidderId"),
+                  "attributes:", json.dumps(STATE["requests"][rid]["item"].get("attributeValues"), ensure_ascii=False),
                   "shipping:", json.dumps(STATE["requests"][rid]["item"].get("shippingOptions")), flush=True)
             return self._send()
         self._send({}, 404)

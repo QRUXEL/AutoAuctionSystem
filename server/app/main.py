@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s
 log = logging.getLogger("app")
 WEB = Path(__file__).parent / "static"          # the built React app (see web/)
 EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days",
-                 "end_at", "shipping_override", "accepted_bidder_override"}
+                 "end_at", "shipping_override", "accepted_bidder_override", "attributes"}
 STATUSES = ("capturing", "processing", "review", "publishing", "sent", "published", "error")
 
 
@@ -169,6 +169,11 @@ def patch_item(item_id: int, body: dict = Body(...)):
     editable(get_item(item_id))
     fields = {k: (v if v != "" or k in ("title", "description", "category_path", "end_at") else None)
               for k, v in body.items() if k in EDITABLE_ITEM}
+    if "attributes" in fields:                 # {"<attribute id>": ["value", ...]}
+        v = fields["attributes"]
+        if v is not None and not isinstance(v, dict):
+            raise HTTPException(422, "attributes must be an object")
+        fields["attributes"] = json.dumps({str(k): (x if isinstance(x, list) else [x]) for k, x in (v or {}).items() if x not in (None, "", [])})
     if "shipping_override" in fields:          # a list of options, or null for the defaults in Settings
         v = fields["shipping_override"]
         if v is not None and not isinstance(v, list):
@@ -372,6 +377,8 @@ def publish(item_id: int):
             raise HTTPException(409, f"Item is {item['status']}")
         missing = [name for name, ok in (("title", item["title"]), ("description", item["description"]),
                                          ("category", item["category_id"])) if not ok]
+        if config.tradera_ready() and not config.dry_run():
+            missing += tradera.missing_attributes(item)          # e.g. Skick, when the category requires it
         if missing:
             raise HTTPException(422, "Missing: " + ", ".join(missing))
         db.update_item(item_id, status="publishing", publish_attempts=item["publish_attempts"] + 1, message="")
@@ -532,6 +539,17 @@ def shipping_options(country: str = "SE"):
         return tradera.shipping_products(country.upper()[:2])
     except Exception as exc:
         raise HTTPException(502, f"Tradera's shipping list could not be fetched: {exc}")
+
+
+@app.get("/api/categories/{category_id}/attributes")
+def category_attributes(category_id: int):
+    """The category's attributes (Skick and others), for the item page."""
+    if not config.get("TRADERA_APP_ID"):
+        return []
+    try:
+        return tradera.attribute_definitions(category_id)
+    except Exception as exc:
+        raise HTTPException(502, f"Tradera's attributes for the category could not be fetched: {exc}")
 
 
 @app.get("/api/tradera/pickup")

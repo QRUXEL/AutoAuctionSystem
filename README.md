@@ -86,6 +86,11 @@ day, and chosen with checkboxes and a dropdown; no ids to type. **Buyer collects
 its lists have one, and always written in the shipping note ("Kan hämtas hos oss i …"). **Free with DSV in Sweden** picks the DSV
 options at 0 kr; **+ DSV sponsors** adds a line saying so to the shipping note.
 
+**Skick and other category fields.** Tradera treats the condition ("Skick") as a category attribute. When an item has a category,
+its attributes are fetched (`GET /v4/categories/{id}/attribute-definitions`, cached a day) and shown under the category: Skick and
+anything the category requires first, the rest under *More details*. They are sent as `attributeValues`; Send is refused while a
+required one is missing. The AI also picks Skick from the category's own list (and says so in its notes, to be checked).
+
 **Categories.** The AI picks the category from Tradera's own tree in two steps: first the section (e.g. *Hem & Hushåll > Porslin & Glas*),
 then the category inside it, with word matches added. If it can't decide, the item's notes say so and the category is left for you.
 

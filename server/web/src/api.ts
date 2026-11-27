@@ -32,6 +32,7 @@ export interface Item {
   tradera_pending_item_id: number | null;
   sent_at: number | null;
   manual_order: number;
+  attributes: string;
   end_at: string | null;
   listing_end_at: number | null;
   end_preview: { at: string | null; text: string; how: string };

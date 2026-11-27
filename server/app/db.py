@@ -66,6 +66,7 @@ MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''",   # videohost.py: what 
                         # bidding on Tradera (bids.py)
                         "tr_bid": "INTEGER", "tr_bids": "INTEGER DEFAULT 0", "tr_next_bid": "INTEGER", "tr_bidder": "TEXT DEFAULT ''",
                         "tr_winner": "TEXT DEFAULT ''", "tr_end": "REAL", "tr_ended": "INTEGER DEFAULT 0", "tr_link": "TEXT DEFAULT ''",
+                        "attributes": "TEXT DEFAULT ''",      # category attributes, e.g. Skick: {"<id>": ["Gott skick"]}
                         "tr_thumb": "TEXT DEFAULT ''", "tr_checked_at": "REAL", "tr_last_bid_at": "REAL", "tr_error": "TEXT DEFAULT ''"},  # photos put in order by hand: keep it when files are added
               "files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera

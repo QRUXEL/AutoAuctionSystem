@@ -94,6 +94,14 @@ def describe(images: list) -> dict:
         cat, result["ai_notes"] = None, (result["ai_notes"] + f"\nCategory not chosen: {exc}").strip()
     if cat:
         result.update(category_id=cat["id"], category_path=cat["path"])
+        try:
+            skick = pick_condition(client, result["title"], result["description"], cat["id"])
+        except Exception as exc:
+            skick = None
+            result["ai_notes"] = (result["ai_notes"] + f"\nSkick not chosen: {exc}").strip()
+        if skick:
+            result["attributes"] = json.dumps({str(skick[0]): [skick[1]]})
+            result["ai_notes"] = (result["ai_notes"] + f"\nSkick set to \u201c{skick[1]}\u201d from the photos' description; check it.").strip()
     elif tradera.categories():
         result["ai_notes"] = (result["ai_notes"] + "\nPick the category by hand.").strip()
     return result
@@ -111,6 +119,17 @@ def _choose(client, question: str, options: list) -> int | None:
     except (TypeError, ValueError):
         return None
     return n if 0 <= n < len(options) else None
+
+
+def pick_condition(client, title: str, description: str, category_id: int) -> tuple | None:
+    """(attribute id, value): the item's Skick from the category's own list of conditions."""
+    cond = next((a for a in tradera.attribute_definitions(category_id) if a["condition"] and a["values"]), None)
+    if not cond:
+        return None
+    n = _choose(client, f"Item for sale on Tradera: {title}\n\n{description[:1500]}\n\n"
+                        f"Which condition ({cond['name']}) fits the item best? If unsure, pick the more modest one. Answer with the number.",
+                cond["values"])
+    return (cond["id"], cond["values"][n]) if n is not None else None
 
 
 def pick_category(client, title: str, description: str, keywords: list) -> dict | None:
