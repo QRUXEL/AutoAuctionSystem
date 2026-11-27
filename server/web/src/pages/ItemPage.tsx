@@ -1,14 +1,14 @@
 import {
   ActionIcon, Alert, Anchor, AspectRatio, Badge, Button, Center, Code, CopyButton, Grid, Group, Image, Loader, Modal, NumberInput,
-  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, Switch } from '@mantine/core';
+  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, Switch, Checkbox } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   IconAdjustmentsHorizontal, IconAlertCircle, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
-  IconSparkles, IconTrash } from '@tabler/icons-react';
+  IconSparkles, IconTrash, IconCopy } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 
 import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
@@ -64,6 +64,8 @@ export function ItemPage() {
   const [dirty, setDirty] = useState(false);
   const [selected, setSelected] = useState(0);
   const [cropping, setCropping] = useState<Photo | null>(null);
+  const [dupOpen, setDupOpen] = useState(false);
+  const [withdrawOriginal, setWithdrawOriginal] = useState(true);
   const [adjusting, setAdjusting] = useState<Photo | null>(null);
   const [confirm, setConfirm] = useState<null | 'publish' | 'golive' | 'delete' | 'rewrite'>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -122,6 +124,19 @@ export function ItemPage() {
     refresh();
     watchSend(id, navigate);
   });
+  const duplicate = async () => {
+    setBusy('duplicate');
+    try {
+      const copy = await api<Item>(`/api/items/${id}/duplicate`, { method: 'POST',
+        body: { withdraw_original: !!item && ['published', 'sent'].includes(item.status) && withdrawOriginal } });
+      setDupOpen(false);
+      refresh();
+      notifications.show({ color: 'green', message: `${ref(copy.id)} is a copy of ${ref(id)}. Check it and send it again.` });
+      navigate(`/items/${copy.id}`);
+    } catch (e) {
+      notifications.show({ color: 'red', title: 'Not duplicated', message: (e as Error).message });
+    } finally { setBusy(null); }
+  };
   const upload = async (files: File[]) => {
     const body = new FormData();
     files.forEach((f) => body.append('files', f));
@@ -174,7 +189,7 @@ export function ItemPage() {
     navigate('/review');
   });
 
-  const locked = !item || BUSY.includes(item.status) || item.status === 'published';
+  const locked = !item || BUSY.includes(item.status) || item.status === 'published' || item.status === 'withdrawn';
   useHotkeys([['mod+S', () => { if (dirty && !locked) act('save', () => save())(); }]]);
 
   if (error) return <Alert color="red" icon={<IconAlertCircle />}>{(error as Error).message}</Alert>;
@@ -194,11 +209,21 @@ export function ItemPage() {
           {item.source === 'session' && <Badge variant="outline" color="gray">Started by hand</Badge>}
           {BUSY.includes(item.status) && <Loader size="xs" />}
         </Group>
-        {item.tradera_item_id && (
-          <Anchor href={`https://www.tradera.com/item/${item.tradera_item_id}`} target="_blank">
-            <Group gap={4}>On Tradera <IconExternalLink size={14} /></Group>
-          </Anchor>
-        )}
+        <Group gap="sm">
+          {item.copied_from && (
+            <Anchor component={Link} to={`/items/${item.copied_from}`} size="sm" c="dimmed">Copy of {ref(item.copied_from)}</Anchor>
+          )}
+          {item.tradera_item_id && item.status !== 'withdrawn' && (
+            <Anchor href={`https://www.tradera.com/item/${item.tradera_item_id}`} target="_blank">
+              <Group gap={4}>On Tradera <IconExternalLink size={14} /></Group>
+            </Anchor>
+          )}
+          {!BUSY.includes(item.status) && (
+            <Tooltip label="A new item to review with the same photos, text and settings, e.g. to list again after fixing errors">
+              <Button size="xs" variant="light" leftSection={<IconCopy size={14} />} onClick={() => setDupOpen(true)}>Duplicate</Button>
+            </Tooltip>
+          )}
+        </Group>
       </Group>
 
       {item.message && <Alert color={item.status === 'error' ? 'red' : 'yellow'} icon={<IconAlertCircle />}>{item.message}</Alert>}
@@ -392,6 +417,23 @@ export function ItemPage() {
         </Grid.Col>
       </Grid>
 
+      <Modal opened={dupOpen} onClose={() => setDupOpen(false)} title={`Duplicate ${item ? ref(item.id) : ''}`} centered>
+        <Stack>
+          <Text size="sm">
+            Makes a new item to review with the same photos (crops and adjustments kept), videos, text, category, Skick, prices and shipping.
+            Nothing is sent to Tradera until you press Send on the copy.
+          </Text>
+          {item && ['published', 'sent'].includes(item.status) && (
+            <Checkbox checked={withdrawOriginal} onChange={(e) => setWithdrawOriginal(e.currentTarget.checked)}
+              label="The original has been removed from Tradera"
+              description="Marks it as removed: its bids are no longer followed and its video page is taken down. Remove it on Tradera yourself; the API can't." />
+          )}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setDupOpen(false)}>Cancel</Button>
+            <Button leftSection={<IconCopy size={16} />} loading={busy === 'duplicate'} onClick={duplicate}>Duplicate</Button>
+          </Group>
+        </Stack>
+      </Modal>
       <AdjustModal
         itemId={id}
         photo={adjusting}

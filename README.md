@@ -192,6 +192,13 @@ it can be deleted or added back. A manual order is kept when photos are added; *
 ## Photo layout
 Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.
 
+## Duplicating an item
+**Duplicate** on an item page makes a new item to review with the same photos (crops and adjustments kept, framed again with the new
+number), videos, text, category, Skick, prices, shipping and end time (unless it has passed). Use it to list something again, for
+example after removing a listing with errors from Tradera. Ticking *The original has been removed from Tradera* marks the original
+**Removed from Tradera**: its bids are no longer followed and its video page on streamhjalpen.tv is taken down. The listing itself
+has to be removed on Tradera; the API has no way to do that.
+
 ## Following the bidding (Auctions page)
 Every published listing's Tradera id is stored, and the server reads it from Tradera (`GET /v4/items/{id}`) on a schedule that
 tightens towards the end: every 15 min, every 5 in the last day, every minute in the last hour, every 20 s in the last 10 minutes,

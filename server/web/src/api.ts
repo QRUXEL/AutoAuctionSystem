@@ -1,4 +1,4 @@
-export type Status = 'capturing' | 'processing' | 'review' | 'publishing' | 'sent' | 'published' | 'error';
+export type Status = 'capturing' | 'processing' | 'review' | 'publishing' | 'sent' | 'published' | 'withdrawn' | 'error';
 
 export interface Crop { x: number; y: number; w: number; h: number }
 
@@ -33,6 +33,7 @@ export interface Item {
   sent_at: number | null;
   manual_order: number;
   attributes: string;
+  copied_from: number | null;
   end_at: string | null;
   listing_end_at: number | null;
   end_preview: { at: string | null; text: string; how: string };

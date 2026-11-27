@@ -22,7 +22,7 @@ log = logging.getLogger("app")
 WEB = Path(__file__).parent / "static"          # the built React app (see web/)
 EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days",
                  "end_at", "shipping_override", "accepted_bidder_override", "attributes"}
-STATUSES = ("capturing", "processing", "review", "publishing", "sent", "published", "error")
+STATUSES = ("capturing", "processing", "review", "publishing", "sent", "published", "withdrawn", "error")
 
 
 @asynccontextmanager
@@ -199,6 +199,37 @@ def regenerate(item_id: int, body: dict = Body(default={})):
     editable(get_item(item_id))
     ingest.reprocess(item_id, photos=bool(body.get("photos", True)), text=bool(body.get("text", True)))
     return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/duplicate")
+async def duplicate(item_id: int, body: dict = Body(default={})):
+    """A copy to review and send again, e.g. after a listing was removed from Tradera because of an error.
+    {"withdraw_original": true} also marks the original as removed from Tradera."""
+    item = get_item(item_id)
+    if item["status"] in ("capturing", "processing", "publishing"):
+        raise HTTPException(409, f"Item is {item['status']}; wait until it is done")
+    if body.get("withdraw_original"):
+        _withdraw(item)
+    new_id = await asyncio.to_thread(ingest.duplicate_item, item_id)
+    return item_json(get_item(new_id))
+
+
+def _withdraw(item: dict):
+    """The listing was removed from Tradera: stop following its bids and take its video page down."""
+    if item["status"] not in ("published", "sent"):
+        return
+    videohost.forget(item["id"])
+    db.update_item(item["id"], status="withdrawn", video_host="",
+                   message="Removed from Tradera. Kept here as a record.")
+
+
+@app.post("/api/items/{item_id}/withdraw")
+def withdraw(item_id: int):
+    item = get_item(item_id)
+    if item["status"] not in ("published", "sent"):
+        raise HTTPException(409, "Only items on Tradera can be marked as removed")
+    _withdraw(item)
+    return item_json(get_item(item_id))
 
 
 @app.delete("/api/items/{item_id}")

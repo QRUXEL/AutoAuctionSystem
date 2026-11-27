@@ -9,6 +9,7 @@ const LOOK: Record<Status, { color: string; label: string }> = {
   publishing: { color: 'cyan', label: 'Sending' },
   sent: { color: 'grape', label: 'On Tradera, not live' },
   published: { color: 'green', label: 'Published' },
+  withdrawn: { color: 'gray', label: 'Removed from Tradera' },
   error: { color: 'red', label: 'Problem' },
 };
 

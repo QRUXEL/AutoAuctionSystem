@@ -159,6 +159,52 @@ def _place(file_id: int, item_id: int):
     return seq
 
 
+COPY_FIELDS = ("title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days",
+               "attributes", "shipping_override", "accepted_bidder_override", "manual_order", "end_at")
+
+
+def duplicate_item(item_id: int) -> int:
+    """A new item to review with the same text, settings and photos (crops and adjustments kept, framed again
+    with the new number) and videos (prepared for the web again). Nothing on Tradera is touched."""
+    src = db.one("SELECT * FROM items WHERE id = ?", item_id)
+    files = db.query("SELECT * FROM files WHERE item_id = ? ORDER BY kind, seq", item_id)
+    end_at = src["end_at"] or ""
+    from . import schedule
+    if end_at and (schedule.parse_local(end_at) or 0) < time.time() + schedule.MIN_AHEAD:
+        end_at = ""                                    # a past end time would only block sending
+    cols = {k: src[k] for k in COPY_FIELDS}
+    cols["end_at"] = end_at
+    names = ", ".join(cols)
+    new_id = db.run(
+        f"INSERT INTO items (status, source, created_at, captured_at, expected_photos, expected_videos, ai_notes, copied_from, {names})"
+        f" VALUES ('processing', 'manual', ?, ?, ?, ?, ?, ?, {', '.join('?' for _ in cols)})",
+        db.now(), db.now(), sum(f["kind"] == "photo" for f in files), sum(f["kind"] == "video" for f in files),
+        f"Copy of #{item_id:04d}.", item_id, *cols.values())
+    (config.ITEMS / str(new_id) / "raw").mkdir(parents=True, exist_ok=True)
+    photos = []
+    for f in files:
+        ext = Path(f["raw"]).suffix.lower()
+        src_path = config.ITEMS / f["raw"]
+        if not src_path.exists():
+            continue
+        fid = db.run("INSERT INTO files (item_id, kind, seq, raw, received_at, name, cam_time, shot_at, crop, crop_auto, adjust)"
+                     " VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?)", new_id, f["kind"], f["seq"], db.now(), f["name"], f["cam_time"],
+                     f["shot_at"], f["crop"] or "", f["crop_auto"] or "", f["adjust"] or "")
+        rel = f"{new_id}/raw/{f['kind']}-{f['seq']:02d}-{fid}{ext}"
+        shutil.copy2(src_path, config.ITEMS / rel)
+        db.run("UPDATE files SET raw = ? WHERE id = ?", rel, fid)
+        if f["kind"] == "video":
+            videos.ensure_token(fid)
+            videos.queue_web_copy(fid)
+        else:
+            photos.append(fid)
+    for fid in photos:                                  # framed again: the frame shows the item's number
+        frame_one(db.one("SELECT * FROM files WHERE id = ?", fid))
+    db.update_item(new_id, status="review")
+    log.info("item %s: copy of item %s", new_id, item_id)
+    return new_id
+
+
 MAX_PHOTOS = 40          # Tradera takes up to 40 images per listing
 
 
