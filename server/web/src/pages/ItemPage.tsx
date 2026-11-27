@@ -275,6 +275,11 @@ export function ItemPage() {
 
             {!locked && (
               <Stack gap="xs" mt="sm">
+                {info?.campaign_code ? (
+                  <Text size="xs" c="pink.4">Published as a charity auction (campaign code {info.campaign_code}). The code is checked against this category first.</Text>
+                ) : (
+                  <Text size="xs" c="dimmed">No charity campaign code is set, so this becomes an ordinary auction.</Text>
+                )}
                 <Group grow>
                   <Button variant="default" leftSection={<IconDeviceFloppy size={16} />} disabled={!dirty}
                     loading={busy === 'save'} onClick={act('save', () => save())}>Save</Button>

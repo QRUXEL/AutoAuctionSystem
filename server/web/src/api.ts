@@ -42,6 +42,7 @@ export interface Info {
   counts: Record<Status, number>;
   loose: number;
   camera_offset: number | null;
+  campaign_code: string;
 }
 
 export interface SecretState { set: boolean; hint: string; source: 'settings' | 'env' | 'none' }
@@ -56,6 +57,7 @@ export interface Listing {
   shipping_condition: string;
   shipping_options: Record<string, unknown>[];
   description_footer: string;
+  campaign_code: string;
 }
 
 export interface Settings {

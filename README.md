@@ -70,6 +70,13 @@ Tradera's API has no drafts: a listing is either uncommitted (invisible) or live
 4. Set the listing defaults (type, duration, start price, shipping options) on the same page. Shipping ids come from `GET /v4/reference-data/shipping-options`.
 5. Leave **Dry run** on until a dry run looks right: Publish then only writes `tradera_payload.json` next to the photos.
 
+**Charity auctions (Musikhjälpen):** put the campaign code from Musikhjälpen/Tradera in **Charity campaign** on the Settings page.
+Every listing is then created with `campaignCode`. Before creating it, the server asks Tradera
+(`POST /v4/listings/validate-campaign-code`) whether the code is valid for the item's category. If it isn't, nothing is created
+and the item shows why: code unknown, campaign not started or ended, category not allowed, code already used, or account not allowed.
+**Check code** on the Settings page runs the same check for a category you pick. Dry runs also check the code when Tradera is connected.
+With no code set, listings are ordinary auctions.
+
 The Claude API key for descriptions is set on the Settings page too. Values saved there override the environment variables in Coolify.
 
 Tradera's API takes images only, so the spin video is kept on the server (viewable and downloadable from the review page) but is not attached to the listing.

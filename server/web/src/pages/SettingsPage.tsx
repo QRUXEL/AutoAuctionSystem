@@ -17,6 +17,8 @@ const LOGIN_RESULTS: Record<string, { color: string; text: string }> = {
   failed: { color: 'red', text: 'Tradera did not hand over a token.' },
 };
 
+import { useInfo } from '../App';
+import { CategorySelect } from '../components/CategorySelect';
 import { api, type Check, type Listing, type SecretState, type Settings } from '../api';
 
 type SecretName = keyof Settings['secrets'];
@@ -33,6 +35,7 @@ export function SettingsPage() {
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const login = params.get('tradera');
+  const info = useInfo().data;
   const { data } = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/api/settings') });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -156,6 +159,13 @@ export function SettingsPage() {
         <TextInput label="Public address of this site" placeholder="https://aas.qruxel.productions"
           description="Used to build the video links that replace <video link> in descriptions. Video pages need no password."
           value={draft.values.PUBLIC_BASE_URL} onChange={(e) => setValue('PUBLIC_BASE_URL', e.currentTarget.value)} />
+      </Section>
+
+      <Section title="Charity campaign (Musikhjälpen)">
+        <TextInput label="Tradera campaign code" placeholder="Not set: listings are ordinary auctions"
+          description="Attached to every listing, so it is published as part of the charity campaign. Tradera rejects the listing if the code is not valid for its category."
+          value={draft.listing.campaign_code} onChange={(e) => setListing('campaign_code', e.currentTarget.value)} />
+        {draft.listing.campaign_code.trim() && <CampaignCheck code={draft.listing.campaign_code.trim()} traderaReady={!!info?.tradera_ready} />}
       </Section>
 
       <Section title="Listing defaults">
@@ -300,4 +310,29 @@ function changed<T extends object>(draft: T, saved: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(draft).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify((saved as Record<string, unknown>)[k])),
   ) as Partial<T>;
+}
+
+/** Asks Tradera whether the code is valid for a category; campaigns can be limited to some categories. */
+function CampaignCheck({ code, traderaReady }: { code: string; traderaReady: boolean }) {
+  const [category, setCategory] = useState<{ id: number | null; path: string }>({ id: null, path: '' });
+  const [result, setResult] = useState<Check | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      setResult(await api<Check>('/api/settings/campaign-check', { method: 'POST', body: { code, category_id: category.id } }));
+    } catch (e) { setResult({ ok: false, message: (e as Error).message }); } finally { setBusy(false); }
+  };
+  return (
+    <Stack gap="xs">
+      <Group align="flex-end" wrap="nowrap">
+        <div style={{ flex: 1 }}>
+          <CategorySelect value={category} onChange={(v) => { setCategory(v); setResult(null); }} traderaReady={traderaReady} />
+        </div>
+        <Button variant="light" loading={busy} disabled={!category.id || !traderaReady} onClick={run}>Check code</Button>
+      </Group>
+      <Text size="xs" c="dimmed">{traderaReady ? 'Pick a category to check the code against. Every item is also checked when it is published.' : 'Connect Tradera to check the code.'}</Text>
+      {result && <Alert color={result.ok ? 'green' : 'red'} variant="light" icon={result.ok ? <IconCheck size={16} /> : <IconX size={16} />}>{result.message}</Alert>}
+    </Stack>
+  );
 }

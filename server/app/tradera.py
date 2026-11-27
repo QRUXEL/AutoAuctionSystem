@@ -58,13 +58,44 @@ def build_payload(item: dict, settings: dict, video_url: str | None = None) -> d
         payload["buyItNowPrice"] = item["buy_now_price"]
     if settings.get("vat") is not None:
         payload["vat"] = settings["vat"]
+    if (settings.get("campaign_code") or "").strip():
+        payload["campaignCode"] = settings["campaign_code"].strip()
     return payload
+
+
+# ---- campaign codes (charity auctions, e.g. Musikhjälpen) ---------------------------
+_REASONS = {
+    "isInvalidBecauseDoesNotExist": "the code does not exist",
+    "isInvalidBecauseHasNotStarted": "the campaign has not started yet",
+    "isInvalidBecauseHasEnded": "the campaign has ended",
+    "isInvalidBecauseCategoryIsNotAllowed": "the campaign does not allow this category",
+    "isInvalidBecauseAlreadyUsed": "the code has already been used",
+    "isInvalidBecauseUserIsNotAllowed": "this Tradera account may not use the code",
+}
+
+
+def validate_campaign(code: str, category_id: int) -> dict:
+    """POST /v4/listings/validate-campaign-code. Returns {ok, message, raw}."""
+    raw = _call(_session(), "POST", "/v4/listings/validate-campaign-code",
+                json={"campaignCode": code.strip(), "categoryId": int(category_id)}) or {}
+    if raw.get("isValid"):
+        bits = [raw.get("description") or "Valid"]
+        if raw.get("isUnsoldFeeFree"):
+            bits.append("no fee if unsold")
+        return {"ok": True, "message": ", ".join(bits), "raw": raw}
+    reasons = [text for key, text in _REASONS.items() if raw.get(key)]
+    return {"ok": False, "message": "Campaign code not valid: " + ("; ".join(reasons) or "no reason given"), "raw": raw}
 
 
 def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
     """Create the listing, upload images, commit, and wait for Tradera's verdict."""
     s = _session()
     payload = build_payload(item, settings, video_url)
+    if payload.get("campaignCode"):
+        check = validate_campaign(payload["campaignCode"], payload["categoryId"])
+        if not check["ok"]:
+            raise TraderaError(check["message"])
+        log(f"campaign code ok: {check['message']}")
     key = f"auction-station-{item['id']}-{item['publish_attempts']}"
     queued = _call(s, "POST", "/v4/listings/items", json=payload, headers={"Idempotency-Key": key})
     request_id, item_id = queued["requestId"], queued.get("itemId")

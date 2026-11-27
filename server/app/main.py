@@ -113,7 +113,8 @@ def info():
     loose = db.one("SELECT COUNT(*) AS n FROM files WHERE item_id = 0")["n"]
     return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(),
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
-            "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset()}
+            "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
+            "campaign_code": config.settings().get("campaign_code") or ""}
 
 
 @app.get("/api/items")
@@ -243,10 +244,17 @@ def _publish(item_id: int):
         video_url = videos.link_for_item(item_id)
         if config.dry_run():
             payload = tradera.build_payload(item, settings, video_url)
+            note = ""
+            if payload.get("campaignCode"):
+                if config.tradera_ready():
+                    check = tradera.validate_campaign(payload["campaignCode"], payload["categoryId"])
+                    note = f" Campaign code: {check['message']}."
+                else:
+                    note = " The campaign code was not checked (Tradera is not connected)."
             (config.ITEMS / str(item_id) / "tradera_payload.json").write_text(
                 json.dumps({"payload": payload, "images": [p.name for p in paths]}, ensure_ascii=False, indent=2), "utf-8")
             db.update_item(item_id, status="review",
-                           message="Dry run: nothing was sent to Tradera. The request is saved next to the photos.")
+                           message="Dry run: nothing was sent to Tradera. The request is saved next to the photos." + note)
             return
         result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
         db.update_item(item_id, status="published", message="", published_at=db.now(),
@@ -380,6 +388,19 @@ def write_settings(body: dict = Body(...)):
         raise HTTPException(422, "shipping_options must be a list")
     config.update_listing(listing)
     return read_settings()
+
+
+@app.post("/api/settings/campaign-check")
+def campaign_check(body: dict):
+    code = str(body.get("code") or config.settings().get("campaign_code") or "").strip()
+    if not code:
+        raise HTTPException(422, "No campaign code")
+    if not config.tradera_ready():
+        return {"ok": False, "message": "Connect Tradera first"}
+    try:
+        return tradera.validate_campaign(code, int(body.get("category_id") or 0))
+    except Exception as exc:
+        return {"ok": False, "message": str(exc)}
 
 
 @app.post("/api/settings/test/{what}")

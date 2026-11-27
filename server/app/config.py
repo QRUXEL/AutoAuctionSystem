@@ -61,6 +61,7 @@ DEFAULT_LISTING = {
     "shipping_condition": "",
     "shipping_options": [],      # e.g. [{"shippingProviderId": 0, "cost": 69}] from /v4/reference-data/shipping-options
     "description_footer": "",    # appended to every description
+    "campaign_code": "",         # Tradera campaign code (e.g. Musikhjälpen); attached to every listing when set
 }
 
 _lock = threading.Lock()

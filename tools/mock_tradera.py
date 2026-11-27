@@ -47,7 +47,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._send({"authToken": f"mock-token-for-{body['userId']}", "hardExpirationTime": "2027-05-27T12:00:00+01:00"})
         if not self.headers.get("X-User-Token"):
             return self._send({"error": "no user token"}, 403)
+        if self.path == "/v4/listings/validate-campaign-code":
+            # Mock rules: MUSIK2026 is valid except in category 999; anything else does not exist.
+            ok = body.get("campaignCode") == "MUSIK2026"
+            return self._send({"isValid": ok and body.get("categoryId") != 999,
+                               "isInvalidBecauseDoesNotExist": not ok,
+                               "isInvalidBecauseCategoryIsNotAllowed": ok and body.get("categoryId") == 999,
+                               "description": "Musikhjälpen (mock)" if ok else None, "isUnsoldFeeFree": ok})
         if self.path == "/v4/listings/items":
+            if body.get("campaignCode") not in (None, "MUSIK2026"):
+                return self._send({"error": "unknown campaign code"}, 400)
             for field in ("title", "description", "categoryId", "itemType", "duration", "startPrice"):
                 if not body.get(field):
                     return self._send({"error": f"{field} missing"}, 400)
@@ -61,7 +70,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send()
         if parts[-1] == "commit":
             STATE["requests"][rid]["committed"] = True
-            print("COMMITTED", rid, STATE["requests"][rid]["item"]["title"], "images:", STATE["requests"][rid]["images"], flush=True)
+            print("COMMITTED", rid, STATE["requests"][rid]["item"]["title"], "images:", STATE["requests"][rid]["images"],
+                  "campaign:", STATE["requests"][rid]["item"].get("campaignCode"), flush=True)
             return self._send()
         self._send({}, 404)
 
