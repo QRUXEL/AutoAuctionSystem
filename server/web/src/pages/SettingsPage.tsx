@@ -1,11 +1,21 @@
 import {
-  Alert, Anchor, Autocomplete, Badge, Button, Group, JsonInput, Loader, Center, NumberInput, Paper, PasswordInput,
-  SegmentedControl, Select, SimpleGrid, Stack, Switch, Text, Textarea, TextInput, Title,
+  ActionIcon, Alert, Anchor, Autocomplete, Badge, Button, Code, CopyButton, Group, JsonInput, Loader, Center, NumberInput,
+  Paper, PasswordInput, SegmentedControl, Select, SimpleGrid, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconCheck, IconPlugConnected, IconX } from '@tabler/icons-react';
+import { IconCheck, IconCopy, IconLogin2, IconPlugConnected, IconX } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ReactNode, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+const LOGIN_RESULTS: Record<string, { color: string; text: string }> = {
+  connected: { color: 'green', text: 'Tradera account connected. The user ID and token are saved.' },
+  rejected: { color: 'yellow', text: 'The Tradera login was cancelled, so nothing changed.' },
+  missing: { color: 'red', text: 'Save the app ID, app key and public key first, then connect.' },
+  expired: { color: 'red', text: 'The login took too long. Press Connect Tradera account again.' },
+  nouser: { color: 'red', text: 'Tradera did not send a user ID back. Tick "Display token on return URL" in the Tradera app settings, or enter the user ID here, and connect again.' },
+  failed: { color: 'red', text: 'Tradera did not hand over a token.' },
+};
 
 import { api, type Check, type Listing, type SecretState, type Settings } from '../api';
 
@@ -21,6 +31,8 @@ const fromSettings = (s: Settings): Draft => ({
 
 export function SettingsPage() {
   const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const login = params.get('tradera');
   const { data } = useQuery({ queryKey: ['settings'], queryFn: () => api<Settings>('/api/settings') });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -89,15 +101,40 @@ export function SettingsPage() {
       </Section>
 
       <Section title="Tradera" test="tradera" dirty={dirty}>
+        {login && LOGIN_RESULTS[login] && (
+          <Alert color={LOGIN_RESULTS[login].color} variant="light" withCloseButton onClose={() => setParams({})}>
+            {LOGIN_RESULTS[login].text}{params.get('reason') ? ` (${params.get('reason')})` : ''}
+          </Alert>
+        )}
         <Text size="sm" c="dimmed">
-          Register an application at <Anchor href="https://api.tradera.com/register" target="_blank" size="sm">api.tradera.com</Anchor> for
-          the app ID and key, and get a user token for the selling account.
+          1. Register an application at <Anchor href="https://api.tradera.com/register" target="_blank" size="sm">api.tradera.com</Anchor> with
+          these return URLs, and tick “Display token on return URL”:
         </Text>
+        <ReturnUrl label="Accept Return URL" path="/tradera/accept" />
+        <ReturnUrl label="Reject Return URL" path="/tradera/reject" />
+        <Text size="sm" c="dimmed">2. Paste the app ID, app key and public key below and save.</Text>
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <TextInput label="App ID" value={draft.values.TRADERA_APP_ID} onChange={(e) => setValue('TRADERA_APP_ID', e.currentTarget.value)} />
           <SecretField label="App key" state={data.secrets.TRADERA_APP_KEY} draft={draft.secrets.TRADERA_APP_KEY}
             onChange={(v) => setSecret('TRADERA_APP_KEY', v)} />
-          <TextInput label="User ID (selling account)" value={draft.values.TRADERA_USER_ID}
+          <TextInput label="Public key" description="Shown with the app in Tradera's developer center" value={draft.values.TRADERA_PUBLIC_KEY}
+            onChange={(e) => setValue('TRADERA_PUBLIC_KEY', e.currentTarget.value)} />
+        </SimpleGrid>
+        <Text size="sm" c="dimmed">3. Log in with the selling account. Tradera sends you back here and the token is saved.</Text>
+        <Group>
+          <Tooltip label="Save first" disabled={!dirty}>
+            <Button component="a" href="/api/tradera/connect" leftSection={<IconLogin2 size={16} />} variant="light"
+              disabled={dirty || !(data.values.TRADERA_APP_ID && data.secrets.TRADERA_APP_KEY.set && data.values.TRADERA_PUBLIC_KEY)}
+              onClick={(e) => { if (dirty) e.preventDefault(); }}>
+              {data.secrets.TRADERA_USER_TOKEN.set ? 'Reconnect Tradera account' : 'Connect Tradera account'}
+            </Button>
+          </Tooltip>
+          {data.values.TRADERA_TOKEN_EXPIRES && (
+            <Text size="sm" c="dimmed">Token valid until {new Date(data.values.TRADERA_TOKEN_EXPIRES).toLocaleString('sv-SE')}</Text>
+          )}
+        </Group>
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <TextInput label="User ID (selling account)" description="Filled in by the login" value={draft.values.TRADERA_USER_ID}
             onChange={(e) => setValue('TRADERA_USER_ID', e.currentTarget.value)} />
           <SecretField label="User token" state={data.secrets.TRADERA_USER_TOKEN} draft={draft.secrets.TRADERA_USER_TOKEN}
             onChange={(v) => setSecret('TRADERA_USER_TOKEN', v)} />
@@ -229,3 +266,20 @@ function SecretField({ label, state, draft, onChange, help }: {
   );
 }
 
+
+function ReturnUrl({ label, path }: { label: string; path: string }) {
+  const url = window.location.origin + path;
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Text size="sm" w={150} style={{ flexShrink: 0 }}>{label}</Text>
+      <Code style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</Code>
+      <CopyButton value={url}>
+        {({ copied, copy }) => (
+          <Tooltip label={copied ? 'Copied' : 'Copy'}>
+            <ActionIcon variant="subtle" color={copied ? 'teal' : 'gray'} onClick={copy}>{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</ActionIcon>
+          </Tooltip>
+        )}
+      </CopyButton>
+    </Group>
+  );
+}

@@ -61,6 +61,8 @@ export interface Settings {
     AI_EXTRA_INSTRUCTIONS: string;
     TRADERA_APP_ID: string;
     TRADERA_USER_ID: string;
+    TRADERA_PUBLIC_KEY: string;
+    TRADERA_TOKEN_EXPIRES: string;
     TRADERA_DRY_RUN: boolean;
     EXPECTED_PHOTOS: number;
     EXPECTED_VIDEOS: number;

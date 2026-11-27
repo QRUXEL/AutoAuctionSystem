@@ -41,6 +41,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body, parts = self._body(), self.path.strip("/").split("/")
+        if self.path == "/v4/auth/token":
+            if not self.headers.get("X-App-Key") or len(body.get("secretKey", "")) < 32:
+                return self._send({"error": "bad request"}, 400)
+            return self._send({"authToken": f"mock-token-for-{body['userId']}", "hardExpirationTime": "2027-05-27T12:00:00+01:00"})
         if not self.headers.get("X-User-Token"):
             return self._send({"error": "no user token"}, 403)
         if self.path == "/v4/listings/items":

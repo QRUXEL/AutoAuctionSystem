@@ -41,6 +41,8 @@ EDITABLE = {
     "TRADERA_APP_KEY": ("secret", os.getenv("TRADERA_APP_KEY", "")),
     "TRADERA_USER_ID": ("str", os.getenv("TRADERA_USER_ID", "")),
     "TRADERA_USER_TOKEN": ("secret", os.getenv("TRADERA_USER_TOKEN", "")),
+    "TRADERA_PUBLIC_KEY": ("str", os.getenv("TRADERA_PUBLIC_KEY", "")),     # the app's public key, for the token login
+    "TRADERA_TOKEN_EXPIRES": ("str", ""),                                   # set by the token login
     "TRADERA_DRY_RUN": ("bool", os.getenv("TRADERA_DRY_RUN", "1") != "0"),
     "EXPECTED_PHOTOS": ("int", int(os.getenv("EXPECTED_PHOTOS", "4"))),
     "EXPECTED_VIDEOS": ("int", int(os.getenv("EXPECTED_VIDEOS", "1"))),

@@ -2,12 +2,16 @@ import base64
 import hmac
 import json
 import logging
+import os
 import threading
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db, describe, ftp, imaging, ingest, tradera
@@ -286,6 +290,65 @@ def test_settings(what: str):
     raise HTTPException(404)
 
 
+# ---- Tradera token login -----------------------------------------------------------
+# Tradera app settings: Accept return URL = https://<site>/tradera/accept,
+#                       Reject return URL = https://<site>/tradera/reject.
+# Works whether or not "Display token on return URL" is enabled.
+LOGIN_STATE = config.DATA / "tradera_login.json"
+
+
+@app.get("/api/tradera/connect", include_in_schema=False)
+def tradera_connect():
+    missing = [n for n in ("TRADERA_APP_ID", "TRADERA_APP_KEY", "TRADERA_PUBLIC_KEY") if not config.get(n)]
+    if missing:
+        return RedirectResponse("/settings?tradera=missing", status_code=303)
+    skey = uuid.uuid4().hex + uuid.uuid4().hex          # 64 characters; Tradera wants 32-255
+    LOGIN_STATE.write_text(json.dumps({"skey": skey, "at": time.time()}), "utf-8")
+    os.chmod(LOGIN_STATE, 0o600)
+    return RedirectResponse(tradera.login_url(skey), status_code=303)
+
+
+@app.get("/tradera/accept", include_in_schema=False)
+def tradera_accept(request: Request):
+    q = request.query_params
+    try:
+        if q.get("token"):                                # "Display token on return URL" is on
+            token, user_id, expires = q["token"], q.get("userId", ""), q.get("exp", "")
+        else:                                             # fetch it with the secret key from the login
+            state = json.loads(LOGIN_STATE.read_text("utf-8")) if LOGIN_STATE.exists() else {}
+            if not state or time.time() - state["at"] > 3600:
+                return RedirectResponse("/settings?tradera=expired", status_code=303)
+            user_id = q.get("userId") or config.get("TRADERA_USER_ID")
+            if not user_id:
+                return RedirectResponse("/settings?tradera=nouser", status_code=303)
+            got = tradera.fetch_token(int(user_id), state["skey"])
+            token, expires = got["authToken"], str(got.get("hardExpirationTime") or "")
+        config.update_integrations({"TRADERA_USER_TOKEN": token, "TRADERA_USER_ID": str(user_id) or None,
+                                    "TRADERA_TOKEN_EXPIRES": expires or None})
+        LOGIN_STATE.unlink(missing_ok=True)
+        return RedirectResponse("/settings?tradera=connected", status_code=303)
+    except Exception as exc:
+        log.exception("Tradera token login failed")
+        return RedirectResponse("/settings?tradera=failed&reason=" + quote(str(exc)[:200]), status_code=303)
+
+
+@app.get("/tradera/reject", include_in_schema=False)
+def tradera_reject():
+    LOGIN_STATE.unlink(missing_ok=True)
+    return RedirectResponse("/settings?tradera=rejected", status_code=303)
+
+
+class _HideTokens(logging.Filter):
+    """Keeps the token Tradera may put in the return URL out of the access log."""
+    def filter(self, record):
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and str(record.args[2]).startswith("/tradera/accept"):
+            record.args = record.args[:2] + ("/tradera/accept",) + record.args[3:]
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_HideTokens())
+
+
 # ---- files and the web app -------------------------------------------------------
 app.mount("/media", StaticFiles(directory=config.ITEMS), name="media")
 if (WEB / "assets").exists():
@@ -294,7 +357,7 @@ if (WEB / "assets").exists():
 
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
-    if path.startswith(("api/", "media/")):
+    if path.startswith(("api/", "media/", "tradera/")):
         raise HTTPException(404)
     target = WEB / path
     if path and target.is_file() and WEB in target.resolve().parents:

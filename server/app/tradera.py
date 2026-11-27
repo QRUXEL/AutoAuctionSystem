@@ -152,3 +152,17 @@ def check() -> dict:
     except Exception as exc:
         out["user"] = {"ok": False, "message": str(exc)}
     return out
+
+
+# ---- token login (https://api.tradera.com/token-login) --------------------------
+LOGIN_URL = "https://api.tradera.com/token-login"
+
+
+def login_url(skey: str) -> str:
+    from urllib.parse import urlencode
+    return LOGIN_URL + "?" + urlencode({"appId": config.get("TRADERA_APP_ID"), "pkey": config.get("TRADERA_PUBLIC_KEY"), "skey": skey})
+
+
+def fetch_token(user_id: int, skey: str) -> dict:
+    """POST /v4/auth/token with the same secret key used for the login. Returns {authToken, hardExpirationTime}."""
+    return _call(_session(user=False), "POST", "/v4/auth/token", json={"userId": int(user_id), "secretKey": skey})
