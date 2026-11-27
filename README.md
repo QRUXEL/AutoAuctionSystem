@@ -113,6 +113,12 @@ Directly over USB on the same computer: `pio run -e esp32s3 -t upload && pio dev
 The LED shows the state: red = nothing connected, yellow = one device, green = ready, blue = running, flashing red = last run failed.
 Pressing the button during a run stops it.
 
+**Starting from the website:** the top bar of the review site shows the station's state and has **Start capture** (and **Stop**
+while it runs). The ESP32 checks in with the server every second (`POST /api/station/poll` with `X-Station-Key`) and picks up
+the command, so the server never has to reach the ESP32 and nothing needs opening in the firewall. A command that isn't picked
+up within 20 s is dropped. The station shows as offline when it hasn't checked in for 5 s. This needs firmware
+`2026-11-27.1` or later, and `SERVER_URL` in `config.h` must be an address the ESP32 can reach.
+
 ### Packet test (optional, on any PC)
 ```
 g++ -std=c++17 -o proto_test firmware/test/proto_test.cpp

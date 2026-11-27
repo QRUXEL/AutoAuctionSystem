@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, layout, tradera, videos
+from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -524,6 +524,32 @@ class _HideTokens(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_HideTokens())
+
+
+# ---- the capture station (ESP32) ------------------------------------------------------
+@app.post("/api/station/poll")
+def station_poll(request: Request, body: dict = Body(default={})):
+    """The ESP32 checks in here about once a second (with X-Station-Key)."""
+    if not (config.STATION_KEY and hmac.compare_digest(request.headers.get("x-station-key", ""), config.STATION_KEY)):
+        raise HTTPException(403, "Station key required")
+    keep = ("busy", "camera", "table", "camera_note", "table_note", "table_battery", "table_pan_deg", "last", "last_item",
+            "wifi_rssi", "version")
+    status = {k: body.get(k) for k in keep if k in body}
+    return {"command": station.checked_in(status, request.client.host if request.client else "")}
+
+
+@app.get("/api/station")
+def station_view():
+    return station.view()
+
+
+@app.post("/api/station/command")
+def station_command(body: dict = Body(...)):
+    try:
+        station.request(str(body.get("command", "")))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return station.view()
 
 
 # ---- public video pages (no password) -------------------------------------------------

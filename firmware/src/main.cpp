@@ -26,6 +26,8 @@
 #include <WiFi.h>
 
 #include "config.h"
+
+#define FIRMWARE_VERSION "2026-11-27.1"
 #include "headone.h"
 #include "sony.h"
 
@@ -227,19 +229,46 @@ static void setupArduinoOta() {
   }
 }
 
+static String statusJson() {
+  String j = "{";
+  j += "\"version\":" + quote(FIRMWARE_VERSION);
+  j += ",\"busy\":" + String(busy ? "true" : "false");
+  j += ",\"last\":" + quote(lastResult);
+  j += ",\"last_item\":" + String(lastItem);
+  j += ",\"camera\":" + String(camera.connected() ? "true" : "false") + ",\"camera_note\":" + quote(cameraError);
+  j += ",\"table\":" + String(head.connected() ? "true" : "false") + ",\"table_note\":" + quote(headError);
+  j += ",\"table_pan_deg\":" + String(head.lastPan(), 2) + ",\"table_battery\":" + String(head.battery());
+  j += ",\"table_mtu\":" + String(head.mtu()) + ",\"table_bad_frames\":" + String(head.badFrames());
+  j += ",\"wifi_rssi\":" + String(WiFi.RSSI()) + "}";
+  return j;
+}
+
+// Checks in with the server about once a second: sends the status, takes a waiting
+// command ("capture" or "abort") from the reply. Lets the site start and stop runs.
+static void pollServer() {
+  static uint32_t last = 0;
+  if (WiFi.status() != WL_CONNECTED || millis() - last < 1000) return;
+  last = millis();
+  HTTPClient http;
+  http.setConnectTimeout(800);
+  http.setTimeout(1500);
+  http.begin(String(SERVER_URL) + "/api/station/poll");
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Station-Key", STATION_KEY);
+  int code = http.POST(statusJson());
+  if (code == 200) {
+    String r = http.getString();
+    if (r.indexOf("\"command\":\"capture\"") >= 0) {
+      if (!busy) startJob(JOB_CAPTURE);
+    } else if (r.indexOf("\"command\":\"abort\"") >= 0) {
+      abortRequested = true;
+    }
+  }
+  http.end();
+}
+
 static void setupWeb() {
-  web.on("/status", HTTP_GET, [] {
-    String j = "{";
-    j += "\"busy\":" + String(busy ? "true" : "false");
-    j += ",\"last\":" + quote(lastResult);
-    j += ",\"last_item\":" + String(lastItem);
-    j += ",\"camera\":" + String(camera.connected() ? "true" : "false") + ",\"camera_note\":" + quote(cameraError);
-    j += ",\"table\":" + String(head.connected() ? "true" : "false") + ",\"table_note\":" + quote(headError);
-    j += ",\"table_pan_deg\":" + String(head.lastPan(), 2) + ",\"table_battery\":" + String(head.battery());
-    j += ",\"table_mtu\":" + String(head.mtu()) + ",\"table_bad_frames\":" + String(head.badFrames());
-    j += ",\"wifi_rssi\":" + String(WiFi.RSSI()) + "}";
-    reply(200, j);
-  });
+  web.on("/status", HTTP_GET, [] { reply(200, statusJson()); });
   web.on("/trigger", HTTP_POST, [] { bool s = startJob(JOB_CAPTURE); reply(s ? 202 : 409, s ? "{\"started\":true}" : "{\"started\":false,\"reason\":\"busy\"}"); });
   web.on("/abort", HTTP_POST, [] { abortRequested = true; reply(200, "{\"ok\":true}"); });
   web.on("/table/jog", HTTP_POST, [] {
@@ -294,6 +323,7 @@ void loop() {
   web.handleClient();
   ArduinoOTA.handle();
   if (updating) return;                                  // no Bluetooth work or captures during an update
+  pollServer();
   updateLed();
 
   static uint32_t lastScan = 0, lastPress = 0;

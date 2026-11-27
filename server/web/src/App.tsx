@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { api, type Info, type Status } from './api';
+import { StationControl } from './components/StationControl';
 import { ItemPage } from './pages/ItemPage';
 import { ItemsPage, VIEWS } from './pages/ItemsPage';
 import { LayoutPage } from './pages/LayoutPage';
@@ -32,8 +33,10 @@ export function App() {
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <Title order={4}>Auction station</Title>
           </Group>
+          <Group gap="md" wrap="nowrap">
+          <StationControl />
           {info && (
-            <Group gap="xs">
+            <Group gap="xs" visibleFrom="md">
               <Tooltip label={info.ai_ready ? 'Claude writes the descriptions' : 'Add a Claude API key in Settings'}>
                 <Badge variant="light" color={info.ai_ready ? 'teal' : 'gray'} leftSection={<IconSparkles size={12} />}>
                   {info.ai_ready ? 'AI on' : 'AI off'}
@@ -44,6 +47,7 @@ export function App() {
               </Tooltip>
             </Group>
           )}
+          </Group>
         </Group>
       </AppShell.Header>
 
