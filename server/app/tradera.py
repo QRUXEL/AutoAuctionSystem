@@ -100,7 +100,8 @@ def default_check_category() -> int | None:
 
 # Tradera has no endpoint that lists campaign codes. A campaign's code appears to match its page name
 # (tradera.com/campaign/<code>), so these are tried; Tradera's validation says which ones exist.
-CAMPAIGN_CANDIDATES = ["musikhjalpen", "musikhjalpen-2026", "Musikhjälpen2026", "MH2026", "MUSIKHJALPEN", "musikhjälpen", "Musikhjalpen", "musikhjalpen2026", "musikhjalpen26", "mh2026", "mh26",
+# Musikhjälpen's own pattern: "MH 20" (private sellers) / "MHF 20" (companies) in 2020, so this year's would be MH 26 / MHF 26.
+CAMPAIGN_CANDIDATES = ["MH26", "MHF26", "MH 26", "MHF 26", "MH2026", "MHF2026", "MH25", "MHF25", "musikhjalpen", "musikhjalpen-2026", "Musikhjälpen2026", "MUSIKHJALPEN", "musikhjälpen", "Musikhjalpen", "musikhjalpen2026", "musikhjalpen26", "mh2026", "mh26",
                        "radiohjalpen", "streamhjalpen"]
 
 

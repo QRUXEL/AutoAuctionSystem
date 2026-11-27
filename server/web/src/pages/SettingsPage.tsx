@@ -416,7 +416,7 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
       </Group>
       <Text size="xs" c="dimmed">
         Tradera may limit a campaign to some product categories. Without a category, the check uses the one your items use most.
-        The charity numbers on tradera.com (e.g. Musikhjälpen 3164) are not campaign codes; Tradera rejects them.
+        The charity numbers on tradera.com (e.g. Musikhjälpen 3164) are not campaign codes. Musikhjälpen used MH 20 (private) and MHF 20 (companies) in 2020, so the likely codes include MH 26 and MHF 26.
       </Text>
     </Stack>
   );
