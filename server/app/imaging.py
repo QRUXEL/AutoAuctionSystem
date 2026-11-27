@@ -12,6 +12,12 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps, 
 
 from .config import BRANDING
 
+try:                                   # HEIF photos (.HIF) from Sony cameras
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 DEFAULT_FRAME = {
     "canvas": [1600, 1600],
     "border": 36,

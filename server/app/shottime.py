@@ -12,6 +12,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from . import imaging  # noqa: F401  (registers the HEIF opener)
+
 EXIF_IFD = 0x8769
 DATETIME_ORIGINAL = 36867
 SUBSEC_ORIGINAL = 37521

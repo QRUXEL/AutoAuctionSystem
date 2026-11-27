@@ -19,7 +19,7 @@ from pathlib import Path
 from . import config, db, describe, imaging, shottime
 
 log = logging.getLogger("ingest")
-PHOTO_EXT = {".jpg", ".jpeg"}
+PHOTO_EXT = {".jpg", ".jpeg", ".hif", ".heif", ".heic"}
 VIDEO_EXT = {".mp4", ".mov"}
 LOOSE_DIR = "loose"
 MARGIN = 3.0             # seconds of slack around a capture window
@@ -119,8 +119,11 @@ def file_received(path: Path):
     ext = path.suffix.lower()
     kind = "photo" if ext in PHOTO_EXT else "video" if ext in VIDEO_EXT else None
     if not kind:
-        log.info("ignoring %s", path.name)
-        path.unlink(missing_ok=True)
+        # e.g. RAW (.ARW): not usable for listings, but never thrown away
+        keep = config.DATA / "other" / path.name
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), keep)
+        log.warning("not a JPEG/HEIF photo or a video, kept in /data/other: %s", path.name)
         return
     received = db.now()
     cam = shottime.photo_time(path) if kind == "photo" else shottime.video_time(path)
