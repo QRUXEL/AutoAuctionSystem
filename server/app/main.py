@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s
 log = logging.getLogger("app")
 WEB = Path(__file__).parent / "static"          # the built React app (see web/)
 EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days"}
-STATUSES = ("capturing", "processing", "review", "publishing", "published", "error")
+STATUSES = ("capturing", "processing", "review", "publishing", "sent", "published", "error")
 
 
 @asynccontextmanager
@@ -75,6 +75,7 @@ def item_json(item: dict) -> dict:
         "adjust": json.loads(f["adjust"]) if f["adjust"] else {"brightness": 0, "contrast": 0},
         "name": f["name"],
     } for f in files if f["kind"] == "photo"]
+    item["changed_since_sent"] = item["status"] == "sent" and _changed_since_sent(item["id"])
     host = videohost.view(item["id"])
     item["video_host"] = host
     item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"],
@@ -116,7 +117,7 @@ def info():
     for row in db.query("SELECT status, COUNT(*) AS n FROM items GROUP BY status"):
         counts[row["status"]] = row["n"]
     loose = db.one("SELECT COUNT(*) AS n FROM files WHERE item_id = 0")["n"]
-    return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(),
+    return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(), "auto_commit": bool(config.get("TRADERA_AUTO_COMMIT")),
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
             "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
             "campaign_code": config.settings().get("campaign_code") or "",
@@ -251,17 +252,29 @@ def adjust_preview(item_id: int, seq: int, body: dict = Body(...)):
     return Response(buf.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-def _publish(item_id: int):
+def _listing(item_id: int, upload_video: bool):
+    """What would go to Tradera for this item: (item, image paths, settings, video link)."""
     item = get_item(item_id)
     photos = db.query("SELECT framed FROM files WHERE item_id = ? AND kind = 'photo' ORDER BY seq", item_id)
     paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]]
-    settings = config.settings()
+    if videohost.configured():
+        # dry runs and checks don't upload; they use the link if the background upload has already happened
+        video_url = videohost.link_for_publish(item_id) if upload_video else (videohost.view(item_id) or {}).get("url")
+    else:
+        video_url = videos.link_for_item(item_id)
+    return item, paths, config.settings(), video_url
+
+
+def _went_live(item_id: int, request_id: int, tradera_item_id):
+    db.update_item(item_id, status="published", message="", published_at=db.now(),
+                   tradera_request_id=request_id, tradera_item_id=tradera_item_id)
+    videohost.kick()          # tells the video page which Tradera item it belongs to
+
+
+def _publish(item_id: int):
+    """Send: creates the listing on Tradera uncommitted, and commits it too when auto-publish is on."""
     try:
-        if videohost.configured():
-            # dry runs don't upload; they use the link if the background upload has already happened
-            video_url = (videohost.view(item_id) or {}).get("url") if config.dry_run() else videohost.link_for_publish(item_id)
-        else:
-            video_url = videos.link_for_item(item_id)
+        item, paths, settings, video_url = _listing(item_id, upload_video=not config.dry_run())
         if config.dry_run():
             payload = tradera.build_payload(item, settings, video_url)
             note = ""
@@ -276,20 +289,35 @@ def _publish(item_id: int):
             db.update_item(item_id, status="review",
                            message="Dry run: nothing was sent to Tradera. The request is saved next to the photos." + note)
             return
-        result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
-        db.update_item(item_id, status="published", message="", published_at=db.now(),
-                       tradera_request_id=result["request_id"], tradera_item_id=result["item_id"])
-        videohost.kick()          # tells the video page which Tradera item it belongs to
+        sent = tradera.send(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
+        if config.get("TRADERA_AUTO_COMMIT"):
+            tradera.commit(sent["request_id"])
+            _went_live(item_id, sent["request_id"], sent["item_id"])
+            return
+        db.update_item(item_id, status="sent", sent_at=db.now(), tradera_request_id=sent["request_id"],
+                       tradera_pending_item_id=sent["item_id"], tradera_sent_sig=sent["signature"],
+                       message="" if sent["confirmed"] else "Tradera has not confirmed the listing yet; Go live checks again.")
     except Exception as exc:
-        log.exception("publishing item %s failed", item_id)
-        db.update_item(item_id, status="error", message=f"Publishing failed: {exc}")
+        log.exception("sending item %s failed", item_id)
+        db.update_item(item_id, status="error", message=f"Sending to Tradera failed: {exc}")
+
+
+def _go_live(item_id: int):
+    item = get_item(item_id)
+    try:
+        tradera.commit(item["tradera_request_id"])
+        _went_live(item_id, item["tradera_request_id"], item["tradera_pending_item_id"])
+    except Exception as exc:
+        log.exception("committing item %s failed", item_id)
+        db.update_item(item_id, status="sent", message=f"Going live failed: {exc}")   # still sent: Go live can be tried again
 
 
 @app.post("/api/items/{item_id}/publish")
 def publish(item_id: int):
+    """Send to Tradera (uncommitted unless auto-publish is on). Also 'Send again' after edits."""
     with db.lock():
         item = get_item(item_id)
-        if item["status"] not in ("review", "error"):
+        if item["status"] not in ("review", "error", "sent"):
             raise HTTPException(409, f"Item is {item['status']}")
         missing = [name for name, ok in (("title", item["title"]), ("description", item["description"]),
                                          ("category", item["category_id"])) if not ok]
@@ -297,6 +325,25 @@ def publish(item_id: int):
             raise HTTPException(422, "Missing: " + ", ".join(missing))
         db.update_item(item_id, status="publishing", publish_attempts=item["publish_attempts"] + 1, message="")
     threading.Thread(target=_publish, args=(item_id,), daemon=True).start()
+    return {"ok": True}
+
+
+def _changed_since_sent(item_id: int) -> bool:
+    item, paths, settings, video_url = _listing(item_id, upload_video=False)
+    return tradera.signature(tradera.build_payload(item, settings, video_url), paths) != item["tradera_sent_sig"]
+
+
+@app.post("/api/items/{item_id}/go-live")
+def go_live(item_id: int):
+    """Commits a listing that was sent uncommitted."""
+    with db.lock():
+        item = get_item(item_id)
+        if item["status"] != "sent" or not item["tradera_request_id"]:
+            raise HTTPException(409, "Only items sent to Tradera and not live yet can go live")
+        if _changed_since_sent(item_id):
+            raise HTTPException(409, "The item has changed since it was sent. Send it again so Tradera gets the new version.")
+        db.update_item(item_id, status="publishing", message="")
+    threading.Thread(target=_go_live, args=(item_id,), daemon=True).start()
     return {"ok": True}
 
 
@@ -422,6 +469,17 @@ def campaign_check(body: dict):
         return tradera.validate_campaign(code, int(body.get("category_id") or 0))
     except Exception as exc:
         return {"ok": False, "message": str(exc)}
+
+
+@app.post("/api/settings/campaign-codes")
+def campaign_codes(body: dict):
+    """Tries likely campaign codes (and any typed) against a category; Tradera can't list them."""
+    if not config.tradera_ready():
+        raise HTTPException(409, "Connect Tradera first")
+    if not body.get("category_id"):
+        raise HTTPException(422, "Pick a category")
+    extra = [c for c in body.get("codes", []) if isinstance(c, str)] + [config.settings().get("campaign_code") or ""]
+    return tradera.find_campaigns(int(body["category_id"]), extra)
 
 
 @app.post("/api/settings/test/{what}")
@@ -562,6 +620,10 @@ class _HideTokens(logging.Filter):
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) >= 3 and str(record.args[2]).startswith("/tradera/accept"):
             record.args = record.args[:2] + ("/tradera/accept",) + record.args[3:]
+        # the station checks in every second and the site polls its state: too noisy to log when they succeed
+        if isinstance(record.args, tuple) and len(record.args) >= 5 and str(record.args[2]) in ("/api/station/poll", "/api/station") \
+                and record.args[4] == 200:
+            return False
         return True
 
 

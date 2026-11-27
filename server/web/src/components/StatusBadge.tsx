@@ -6,7 +6,8 @@ const LOOK: Record<Status, { color: string; label: string }> = {
   capturing: { color: 'blue', label: 'Capturing' },
   processing: { color: 'indigo', label: 'Processing' },
   review: { color: 'yellow', label: 'To review' },
-  publishing: { color: 'cyan', label: 'Publishing' },
+  publishing: { color: 'cyan', label: 'Sending' },
+  sent: { color: 'grape', label: 'On Tradera, not live' },
   published: { color: 'green', label: 'Published' },
   error: { color: 'red', label: 'Problem' },
 };

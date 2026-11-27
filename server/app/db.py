@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS files (
 """
 
 # files.item_id = 0 means a loose shot (taken outside any capture window, e.g. a test shot)
-MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''"},   # videohost.py: what has been sent to streamhjalpen.tv
+MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''",   # videohost.py: what has been sent to streamhjalpen.tv
+                        "tradera_pending_item_id": "INTEGER",  # item id of a request sent but not committed
+                        "tradera_sent_sig": "TEXT DEFAULT ''", # fingerprint of what was sent, to catch edits before Go live
+                        "sent_at": "REAL"},
               "files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera
                         "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)

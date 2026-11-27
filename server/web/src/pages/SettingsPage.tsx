@@ -147,11 +147,14 @@ export function SettingsPage() {
           <SecretField label="User token" state={data.secrets.TRADERA_USER_TOKEN} draft={draft.secrets.TRADERA_USER_TOKEN}
             onChange={(v) => setSecret('TRADERA_USER_TOKEN', v)} />
         </SimpleGrid>
-        <Switch label="Dry run" description="When on, Publish only saves the Tradera request on the server. Turn off to publish for real."
+        <Switch label="Dry run" description="When on, Send only saves the Tradera request on the server. Turn off to send to Tradera for real."
           checked={draft.values.TRADERA_DRY_RUN} onChange={(e) => setValue('TRADERA_DRY_RUN', e.currentTarget.checked)}
           color="yellow" />
-        {!draft.values.TRADERA_DRY_RUN && (
-          <Alert color="orange" variant="light">With dry run off, Publish creates live listings that people can bid on.</Alert>
+        <Switch label="Auto-publish" color="green"
+          description="Off: Send puts the listing on Tradera without publishing it, and it goes live when you press Go live. On: Send publishes it straight away."
+          checked={draft.values.TRADERA_AUTO_COMMIT} onChange={(e) => setValue('TRADERA_AUTO_COMMIT', e.currentTarget.checked)} />
+        {!draft.values.TRADERA_DRY_RUN && draft.values.TRADERA_AUTO_COMMIT && (
+          <Alert color="orange" variant="light">With dry run off and auto-publish on, Send creates live listings that people can bid on.</Alert>
         )}
       </Section>
 
@@ -162,10 +165,7 @@ export function SettingsPage() {
       </Section>
 
       <Section title="Charity campaign (Musikhjälpen)">
-        <TextInput label="Tradera campaign code" placeholder="Not set: listings are ordinary auctions"
-          description="Attached to every listing, so it is published as part of the charity campaign. Tradera rejects the listing if the code is not valid for its category."
-          value={draft.listing.campaign_code} onChange={(e) => setListing('campaign_code', e.currentTarget.value)} />
-        {draft.listing.campaign_code.trim() && <CampaignCheck code={draft.listing.campaign_code.trim()} traderaReady={!!info?.tradera_ready} />}
+        <CampaignPicker value={draft.listing.campaign_code} onChange={(v) => setListing('campaign_code', v)} traderaReady={!!info?.tradera_ready} />
       </Section>
 
       <Section title="Listing defaults">
@@ -312,27 +312,63 @@ function changed<T extends object>(draft: T, saved: T): Partial<T> {
   ) as Partial<T>;
 }
 
-/** Asks Tradera whether the code is valid for a category; campaigns can be limited to some categories. */
-function CampaignCheck({ code, traderaReady }: { code: string; traderaReady: boolean }) {
+interface CampaignOption { code: string; ok: boolean; message: string; description: string }
+
+/** Tradera can't list campaign codes, so the server tries likely ones (and any typed) and shows which Tradera accepts. */
+function CampaignPicker({ value, onChange, traderaReady }: { value: string; onChange: (v: string) => void; traderaReady: boolean }) {
   const [category, setCategory] = useState<{ id: number | null; path: string }>({ id: null, path: '' });
-  const [result, setResult] = useState<Check | null>(null);
+  const [options, setOptions] = useState<CampaignOption[] | null>(null);
+  const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
-  const run = async () => {
-    setBusy(true);
+  const [error, setError] = useState('');
+
+  const find = async (codes: string[] = []) => {
+    setBusy(true); setError('');
     try {
-      setResult(await api<Check>('/api/settings/campaign-check', { method: 'POST', body: { code, category_id: category.id } }));
-    } catch (e) { setResult({ ok: false, message: (e as Error).message }); } finally { setBusy(false); }
+      const found = await api<CampaignOption[]>('/api/settings/campaign-codes', { method: 'POST', body: { category_id: category.id, codes } });
+      setOptions(found);
+      const hit = codes.length ? found.find((o) => o.code.toLowerCase() === codes[0].toLowerCase()) : undefined;
+      if (hit?.ok) onChange(hit.code);
+      if (hit && !hit.ok) setError(`${hit.code}: ${hit.message}`);
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+
+  const valid = (options ?? []).filter((o) => o.ok);
+  const data = [
+    { value: '', label: 'None: ordinary auctions' },
+    ...valid.map((o) => ({ value: o.code, label: o.description ? `${o.description} (${o.code})` : o.code })),
+    ...(value && !valid.some((o) => o.code === value) ? [{ value, label: `${value} (saved, not checked yet)` }] : []),
+  ];
+
   return (
     <Stack gap="xs">
+      <Text size="sm" c="dimmed">
+        Tradera has no list of campaign codes, so this asks Tradera about likely codes (and any you type) and lists the ones it accepts.
+        Campaigns can be limited to some categories, so pick one you will list in.
+      </Text>
       <Group align="flex-end" wrap="nowrap">
         <div style={{ flex: 1 }}>
-          <CategorySelect value={category} onChange={(v) => { setCategory(v); setResult(null); }} traderaReady={traderaReady} />
+          <CategorySelect value={category} onChange={(v) => { setCategory(v); setOptions(null); }} traderaReady={traderaReady} />
         </div>
-        <Button variant="light" loading={busy} disabled={!category.id || !traderaReady} onClick={run}>Check code</Button>
+        <Button variant="light" loading={busy} disabled={!category.id || !traderaReady} onClick={() => find()}>Find campaigns</Button>
       </Group>
-      <Text size="xs" c="dimmed">{traderaReady ? 'Pick a category to check the code against. Every item is also checked when it is published.' : 'Connect Tradera to check the code.'}</Text>
-      {result && <Alert color={result.ok ? 'green' : 'red'} variant="light" icon={result.ok ? <IconCheck size={16} /> : <IconX size={16} />}>{result.message}</Alert>}
+      {!traderaReady && <Text size="xs" c="yellow.5">Connect Tradera first.</Text>}
+      <Select label="Campaign for every listing" data={data} value={value} onChange={(v) => onChange(v ?? '')} allowDeselect={false}
+        description={value ? 'Sent with every listing; checked against each item’s category before publishing.' : 'Listings are ordinary auctions.'} />
+      {options && !valid.length && (
+        <Alert color="yellow" variant="light">
+          Tradera accepted none of the likely codes for this category. Ask Musikhjälpen/Radiohjälpen or Tradera for the code, then check it below.
+        </Alert>
+      )}
+      {options && (
+        <Text size="xs" c="dimmed">Tried: {options.map((o) => `${o.code} ${o.ok ? '✓' : '✗'}`).join(' · ')}</Text>
+      )}
+      <Group align="flex-end" wrap="nowrap">
+        <TextInput style={{ flex: 1 }} label="Or check a code you were given" placeholder="Code from the campaign"
+          value={typed} onChange={(e) => setTyped(e.currentTarget.value)} />
+        <Button variant="default" loading={busy} disabled={!typed.trim() || !category.id || !traderaReady} onClick={() => find([typed.trim()])}>Check and use</Button>
+      </Group>
+      {error && <Alert color="red" variant="light" icon={<IconX size={16} />}>{error}</Alert>}
     </Stack>
   );
 }

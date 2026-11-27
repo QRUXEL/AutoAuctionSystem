@@ -68,9 +68,21 @@ Tradera's API has no drafts: a listing is either uncommitted (invisible) or live
 2. Get a user token for the selling account (Tradera's token login flow, see their Authorization docs).
 3. Enter app ID, app key, user ID and token on the review site's **Settings** page and press **Test connection**.
 4. Set the listing defaults (type, duration, start price, shipping options) on the same page. Shipping ids come from `GET /v4/reference-data/shipping-options`.
-5. Leave **Dry run** on until a dry run looks right: Publish then only writes `tradera_payload.json` next to the photos.
+5. Leave **Dry run** on until a dry run looks right: Send then only writes `tradera_payload.json` next to the photos.
 
-**Charity auctions (Musikhjälpen):** put the campaign code from Musikhjälpen/Tradera in **Charity campaign** on the Settings page.
+**Send, then Go live.** With **Auto-publish** off (the default), **Send** creates the listing on Tradera with `autoCommit: false`
+and uploads the photos, then waits until Tradera reports it ready. The item shows *On Tradera, not live* and is listed under
+**Waiting to go live**; nobody can see it or bid until **Go live** commits it. If the item is edited after sending, Go live is refused
+and the button becomes **Send again**, which sends a fresh copy (Tradera's API has no way to remove the unpublished one; it is never
+published). With Auto-publish on, Send commits straight away. Tradera's docs don't say whether unpublished listings show on
+tradera.com or how long they are kept, so don't leave them waiting for days.
+
+**Categories.** The AI picks the category from Tradera's own tree in two steps: first the section (e.g. *Hem & Hushåll > Porslin & Glas*),
+then the category inside it, with word matches added. If it can't decide, the item's notes say so and the category is left for you.
+
+**Charity auctions (Musikhjälpen):** Tradera's API cannot list campaign codes, so the Settings page asks Tradera about likely codes
+(a campaign's code seems to match its page, e.g. tradera.com/campaign/musikhjalpen → `musikhjalpen`) for a category you pick, and
+offers the ones Tradera accepts in a dropdown. A code you were given can be checked and used there too.
 Every listing is then created with `campaignCode`. Before creating it, the server asks Tradera
 (`POST /v4/listings/validate-campaign-code`) whether the code is valid for the item's category. If it isn't, nothing is created
 and the item shows why: code unknown, campaign not started or ended, category not allowed, code already used, or account not allowed.

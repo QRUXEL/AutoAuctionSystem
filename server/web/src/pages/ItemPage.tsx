@@ -55,7 +55,7 @@ export function ItemPage() {
   const [selected, setSelected] = useState(0);
   const [cropping, setCropping] = useState<Photo | null>(null);
   const [adjusting, setAdjusting] = useState<Photo | null>(null);
-  const [confirm, setConfirm] = useState<null | 'publish' | 'delete' | 'rewrite'>(null);
+  const [confirm, setConfirm] = useState<null | 'publish' | 'golive' | 'delete' | 'rewrite'>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Take fresh data from the server unless someone is editing.
@@ -101,9 +101,16 @@ export function ItemPage() {
     if (dirty) await save(true);
     await api(`/api/items/${id}/publish`, { method: 'POST' });
     refresh();
-    notifications.show({ color: 'green', message: info?.dry_run ? 'Dry run done: the request was saved, nothing sent.' : 'Sent to Tradera' });
+    notifications.show({ color: 'green', message: info?.dry_run ? 'Dry run: the request is being saved, nothing is sent.'
+      : info?.auto_commit ? 'Publishing on Tradera…' : 'Sending to Tradera. It stays hidden until you press Go live.' });
     const next = (await api<Item[]>('/api/items?status=review')).find((i) => i.id !== id);
     navigate(next && !info?.dry_run ? `/items/${next.id}` : info?.dry_run ? `/items/${id}` : '/review');
+  });
+  const goLive = act('golive', async () => {
+    if (dirty) await save(true);
+    await api(`/api/items/${id}/go-live`, { method: 'POST' });
+    refresh();
+    notifications.show({ color: 'green', message: 'Going live on Tradera…' });
   });
   const rewrite = act('rewrite', async () => {
     await api(`/api/items/${id}/regenerate`, { method: 'POST', body: { photos: false, text: true } });
@@ -290,6 +297,13 @@ export function ItemPage() {
 
             {!locked && (
               <Stack gap="xs" mt="sm">
+                {item.status === 'sent' && (
+                  <Text size="xs" c={item.changed_since_sent || dirty ? 'orange.4' : 'grape.3'}>
+                    {item.changed_since_sent || dirty
+                      ? 'Changed since it was sent. Send it again so Tradera gets this version (the earlier, unpublished copy stays unused on Tradera).'
+                      : 'On Tradera but not published: nobody can see it or bid until you press Go live.'}
+                  </Text>
+                )}
                 {info?.campaign_code ? (
                   <Text size="xs" c="pink.4">Published as a charity auction (campaign code {info.campaign_code}). The code is checked against this category first.</Text>
                 ) : (
@@ -299,8 +313,14 @@ export function ItemPage() {
                   <Button variant="default" leftSection={<IconDeviceFloppy size={16} />} disabled={!dirty}
                     loading={busy === 'save'} onClick={act('save', () => save())}>Save</Button>
                   <Tooltip label={missing.length ? `Missing: ${missing.join(', ')}` : ''} disabled={!missing.length}>
-                    <Button color="green" leftSection={<IconSend size={16} />} disabled={missing.length > 0}
-                      onClick={() => setConfirm('publish')}>{info?.dry_run ? 'Publish (dry run)' : 'Publish to Tradera'}</Button>
+                    {item.status === 'sent' && !item.changed_since_sent && !dirty ? (
+                      <Button color="green" leftSection={<IconSend size={16} />} onClick={() => setConfirm('golive')}>Go live</Button>
+                    ) : (
+                      <Button color={item.status === 'sent' ? 'orange' : 'green'} leftSection={<IconSend size={16} />} disabled={missing.length > 0}
+                        onClick={() => setConfirm('publish')}>
+                        {item.status === 'sent' ? 'Send again' : info?.dry_run ? 'Send (dry run)' : info?.auto_commit ? 'Publish to Tradera' : 'Send to Tradera'}
+                      </Button>
+                    )}
                   </Tooltip>
                 </Group>
                 <Group grow>
@@ -338,19 +358,23 @@ export function ItemPage() {
       />
 
       <Modal opened={!!confirm} onClose={() => setConfirm(null)} centered
-        title={{ publish: info?.dry_run ? 'Dry run' : 'Publish to Tradera', delete: 'Delete item', rewrite: 'Rewrite with AI' }[confirm ?? 'publish']}>
+        title={{ publish: info?.dry_run ? 'Dry run' : info?.auto_commit ? 'Publish to Tradera' : 'Send to Tradera', golive: 'Go live on Tradera',
+          delete: 'Delete item', rewrite: 'Rewrite with AI' }[confirm ?? 'publish']}>
         <Text size="sm">
           {confirm === 'publish' && (info?.dry_run
             ? 'This builds the Tradera request and saves it next to the photos. Nothing is sent.'
-            : 'The listing goes live on Tradera straight away and people can bid on it.')}
+            : info?.auto_commit ? 'The listing goes live on Tradera straight away and people can bid on it.'
+            : 'The listing and photos are uploaded to Tradera but not published. Press Go live afterwards to publish it.')}
+          {confirm === 'golive' && 'The listing is published on Tradera now and people can bid on it.'}
           {confirm === 'delete' && 'The item and its photos are removed from this list. Files stay on the server.'}
           {confirm === 'rewrite' && 'Claude writes a new title, description and category from the photos. Your current text is replaced.'}
         </Text>
         <Group justify="flex-end" mt="lg">
           <Button variant="default" onClick={() => setConfirm(null)}>Cancel</Button>
-          <Button color={confirm === 'delete' ? 'red' : confirm === 'publish' ? 'green' : undefined}
-            loading={!!busy} onClick={{ publish, delete: remove, rewrite }[confirm ?? 'publish']}>
-            {confirm === 'publish' ? (info?.dry_run ? 'Run dry run' : 'Publish now') : confirm === 'delete' ? 'Delete' : 'Rewrite'}
+          <Button color={confirm === 'delete' ? 'red' : confirm === 'publish' || confirm === 'golive' ? 'green' : undefined}
+            loading={!!busy} onClick={{ publish, golive: goLive, delete: remove, rewrite }[confirm ?? 'publish']}>
+            {confirm === 'publish' ? (info?.dry_run ? 'Run dry run' : info?.auto_commit ? 'Publish now' : 'Send') : confirm === 'golive' ? 'Go live now'
+              : confirm === 'delete' ? 'Delete' : 'Rewrite'}
           </Button>
         </Group>
       </Modal>

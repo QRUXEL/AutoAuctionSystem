@@ -74,6 +74,30 @@ _REASONS = {
 }
 
 
+# Tradera has no endpoint that lists campaign codes. A campaign's code appears to match its page name
+# (tradera.com/campaign/<code>), so these are tried; Tradera's validation says which ones exist.
+CAMPAIGN_CANDIDATES = ["musikhjalpen", "musikhjälpen", "Musikhjalpen", "musikhjalpen2026", "musikhjalpen26", "mh2026", "mh26",
+                       "radiohjalpen", "streamhjalpen"]
+
+
+def find_campaigns(category_id: int, extra: list | None = None) -> list:
+    """Checks the candidate codes (and any extra) against a category; valid ones first."""
+    seen, out = set(), []
+    for code in [*(extra or []), *CAMPAIGN_CANDIDATES]:
+        code = (code or "").strip()
+        if not code or code.lower() in seen:
+            continue
+        seen.add(code.lower())
+        try:
+            r = validate_campaign(code, category_id)
+            out.append({"code": code, "ok": r["ok"], "message": r["message"],
+                        "description": (r.get("raw") or {}).get("description") or ""})
+        except TraderaError as exc:
+            out.append({"code": code, "ok": False, "message": str(exc)[:200], "description": ""})
+    out.sort(key=lambda c: not c["ok"])
+    return out
+
+
 def validate_campaign(code: str, category_id: int) -> dict:
     """POST /v4/listings/validate-campaign-code. Returns {ok, message, raw}."""
     raw = _call(_session(), "POST", "/v4/listings/validate-campaign-code",
@@ -87,8 +111,32 @@ def validate_campaign(code: str, category_id: int) -> dict:
     return {"ok": False, "message": "Campaign code not valid: " + ("; ".join(reasons) or "no reason given"), "raw": raw}
 
 
-def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
-    """Create the listing, upload images, commit, and wait for Tradera's verdict."""
+def signature(payload: dict, image_paths: list) -> str:
+    """Fingerprint of a listing: the request body and the image files."""
+    import hashlib
+    h = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode())
+    for p in image_paths:
+        st = p.stat()
+        h.update(f"{p.name}:{st.st_size}:{int(st.st_mtime)}".encode())
+    return h.hexdigest()
+
+
+def _wait(s, request_id: int, until: set, seconds: int) -> dict | None:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        results = _call(s, "GET", "/v4/listings/request-results", params={"requestIds": request_id}) or []
+        result = results[0] if results else {}
+        code = result.get("resultCode")
+        if code in until:
+            return result
+        if code not in (None, RESULT_WAITING, RESULT_UNCOMMITTED, RESULT_OK):
+            raise TraderaError(f"Tradera rejected the listing (code {code}): {result.get('message')}")
+        time.sleep(3)
+    return None
+
+
+def send(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
+    """Creates the listing with autoCommit off and uploads the images. Nothing is live until commit()."""
     s = _session()
     payload = build_payload(item, settings, video_url)
     if payload.get("campaignCode"):
@@ -104,18 +152,25 @@ def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, v
         body = {"imageData": base64.b64encode(path.read_bytes()).decode(), "imageFormat": 1, "hasMega": True}
         _call(s, "POST", f"/v4/listings/items/{request_id}/images", json=body)
         log(f"uploaded {path.name}")
+    # Tradera checks the request in the background; wait until it reports it ready (uncommitted) or rejects it
+    ready = _wait(s, request_id, {RESULT_UNCOMMITTED}, 60)
+    return {"request_id": request_id, "item_id": item_id, "confirmed": ready is not None,
+            "signature": signature(payload, image_paths)}
+
+
+def commit(request_id: int) -> None:
+    """Makes a sent listing live and waits for Tradera to confirm."""
+    s = _session()
     _call(s, "POST", f"/v4/listings/items/{request_id}/commit")
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        results = _call(s, "GET", "/v4/listings/request-results", params={"requestIds": request_id}) or []
-        result = results[0] if results else {}
-        code = result.get("resultCode")
-        if code == RESULT_OK:
-            return {"request_id": request_id, "item_id": item_id}
-        if code not in (None, RESULT_WAITING, RESULT_UNCOMMITTED):
-            raise TraderaError(f"Tradera rejected the listing (code {code}): {result.get('message')}")
-        time.sleep(3)
-    raise TraderaError(f"Tradera did not confirm request {request_id} within two minutes; check the account before retrying")
+    if _wait(s, request_id, {RESULT_OK}, 120) is None:
+        raise TraderaError(f"Tradera did not confirm request {request_id} within two minutes; check the account before retrying")
+
+
+def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
+    """Send and commit in one go."""
+    sent = send(item, image_paths, settings, log, video_url)
+    commit(sent["request_id"])
+    return sent
 
 
 # ---- categories -----------------------------------------------------------

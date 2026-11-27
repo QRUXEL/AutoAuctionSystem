@@ -1,8 +1,7 @@
 import { AppShell, Badge, Burger, Group, NavLink, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconFrame, IconPhotoQuestion, IconSettings, IconSparkles,
-} from '@tabler/icons-react';
+  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconFrame, IconPhotoQuestion, IconSettings, IconSparkles, IconClockPause } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -14,7 +13,7 @@ import { LayoutPage } from './pages/LayoutPage';
 import { LoosePage } from './pages/LoosePage';
 import { SettingsPage } from './pages/SettingsPage';
 
-const ICONS = { review: IconChecklist, incoming: IconInbox, published: IconCloudUpload, problems: IconAlertTriangle, all: IconLayoutGrid };
+const ICONS = { sent: IconClockPause, review: IconChecklist, incoming: IconInbox, published: IconCloudUpload, problems: IconAlertTriangle, all: IconLayoutGrid };
 
 export function useInfo() {
   return useQuery({ queryKey: ['info'], queryFn: () => api<Info>('/api/info'), refetchInterval: 5000 });
@@ -42,8 +41,9 @@ export function App() {
                   {info.ai_ready ? 'AI on' : 'AI off'}
                 </Badge>
               </Tooltip>
-              <Tooltip label={info.dry_run ? 'Publishing only saves the request; nothing is sent to Tradera' : 'Publish sends listings live to Tradera'}>
-                <Badge variant="filled" color={info.dry_run ? 'yellow' : 'green'}>{info.dry_run ? 'Dry run' : 'Live'}</Badge>
+              <Tooltip label={info.dry_run ? 'Sending only saves the request; nothing is sent to Tradera'
+                : info.auto_commit ? 'Send puts listings live on Tradera' : 'Send puts listings on Tradera; they go live when you press Go live'}>
+                <Badge variant="filled" color={info.dry_run ? 'yellow' : info.auto_commit ? 'green' : 'grape'}>{info.dry_run ? 'Dry run' : info.auto_commit ? 'Auto-publish' : 'Send, then Go live'}</Badge>
               </Tooltip>
             </Group>
           )}

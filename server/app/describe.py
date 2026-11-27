@@ -88,22 +88,55 @@ def describe(images: list) -> dict:
     result = {"title": str(draft.get("title", ""))[:80], "description": str(draft.get("description", "")),
               "ai_notes": str(draft.get("notes_for_reviewer", "")), "category_id": None, "category_path": ""}
 
-    candidates = tradera.search_categories(draft.get("category_keywords") or [])
-    if candidates:
-        listing = "\n".join(f"{c['id']}: {c['path']}" for c in candidates)
-        pick_tool = {"name": "pick", "description": "Choose the category.",
-                     "input_schema": {"type": "object", "properties": {"category_id": {"type": "integer"}},
-                                      "required": ["category_id"]}}
-        try:
-            chosen = _structured(client, pick_tool, [{"role": "user", "content":
-                                 f"Item: {result['title']}\n\n{result['description']}\n\nPick the best Tradera category:\n{listing}"}],
-                                 max_tokens=300).get("category_id")
-            match = next((c for c in candidates if c["id"] == int(chosen)), None)
-        except Exception:                       # the text is still useful without a category
-            match = None
-        if match:
-            result.update(category_id=match["id"], category_path=match["path"])
+    try:
+        cat = pick_category(client, result["title"], result["description"], draft.get("category_keywords") or [])
+    except Exception as exc:                    # the text is still useful without a category
+        cat, result["ai_notes"] = None, (result["ai_notes"] + f"\nCategory not chosen: {exc}").strip()
+    if cat:
+        result.update(category_id=cat["id"], category_path=cat["path"])
+    elif tradera.categories():
+        result["ai_notes"] = (result["ai_notes"] + "\nPick the category by hand.").strip()
     return result
+
+
+PICK_TOOL = {"name": "pick", "description": "Choose one option by its number.",
+             "input_schema": {"type": "object", "properties": {"number": {"type": "integer"}}, "required": ["number"]}}
+
+
+def _choose(client, question: str, options: list) -> int | None:
+    listing = "\n".join(f"{i}: {o}" for i, o in enumerate(options))
+    n = _structured(client, PICK_TOOL, [{"role": "user", "content": f"{question}\n\n{listing}"}], max_tokens=200).get("number")
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n < len(options) else None
+
+
+def pick_category(client, title: str, description: str, keywords: list) -> dict | None:
+    """Two steps through Tradera's own category tree: first the section, then the category inside it.
+    Keyword matches are added to the second step, so a good word match is never lost."""
+    leaves = tradera.categories()
+    if not leaves:
+        return None
+    item = f"Item for sale on Tradera: {title}\n\n{description[:1500]}"
+    sections = sorted({" > ".join(c["path"].split(" > ")[:2]) for c in leaves})
+    n = _choose(client, item + "\n\nWhich section of Tradera's category tree does it belong in? Answer with the number.", sections)
+    in_section = [c for c in leaves if n is not None and (c["path"] + " > ").startswith(sections[n] + " > ")]
+    if len(in_section) > 250:                    # very large sections: keep the leaves that share words with the item
+        words = {w.lower() for w in (title + " " + " ".join(keywords)).split() if len(w) > 2}
+        in_section = [c for c in in_section if any(w in c["path"].lower() for w in words)] or in_section[:250]
+    options, seen = [], set()
+    for c in in_section + tradera.search_categories(keywords, limit=25):
+        if c["id"] not in seen:
+            seen.add(c["id"])
+            options.append(c)
+    if not options:
+        return None
+    if len(options) == 1:
+        return options[0]
+    k = _choose(client, item + "\n\nWhich Tradera category fits it best? Answer with the number.", [c["path"] for c in options])
+    return options[k] if k is not None else None
 
 
 def check() -> dict:

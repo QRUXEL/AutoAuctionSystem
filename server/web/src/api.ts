@@ -1,4 +1,4 @@
-export type Status = 'capturing' | 'processing' | 'review' | 'publishing' | 'published' | 'error';
+export type Status = 'capturing' | 'processing' | 'review' | 'publishing' | 'sent' | 'published' | 'error';
 
 export interface Crop { x: number; y: number; w: number; h: number }
 
@@ -28,6 +28,9 @@ export interface Item {
   ai_notes: string;
   message: string;
   tradera_item_id: number | null;
+  tradera_pending_item_id: number | null;
+  sent_at: number | null;
+  changed_since_sent: boolean;
   published_at: number | null;
   expected_photos: number;
   photos: Photo[];
@@ -38,6 +41,7 @@ export interface Item {
 export interface Info {
   tradera_ready: boolean;
   dry_run: boolean;
+  auto_commit: boolean;
   ai_ready: boolean;
   photo_aspect: number | null;
   counts: Record<Status, number>;
@@ -73,6 +77,7 @@ export interface Settings {
     TRADERA_TOKEN_EXPIRES: string;
     PUBLIC_BASE_URL: string;
     TRADERA_DRY_RUN: boolean;
+    TRADERA_AUTO_COMMIT: boolean;
     EXPECTED_PHOTOS: number;
     EXPECTED_VIDEOS: number;
     GRACE_SECONDS: number;

@@ -11,7 +11,8 @@ export interface View { key: string; label: string; statuses: string[]; empty: s
 export const VIEWS: View[] = [
   { key: 'review', label: 'To review', statuses: ['review'], empty: 'Nothing waiting for review.' },
   { key: 'incoming', label: 'Incoming', statuses: ['capturing', 'processing'], empty: 'No item is being photographed or processed.' },
-  { key: 'published', label: 'Published', statuses: ['publishing', 'published'], empty: 'Nothing published yet.' },
+  { key: 'sent', label: 'Waiting to go live', statuses: ['publishing', 'sent'], empty: 'Nothing is waiting on Tradera.' },
+  { key: 'published', label: 'Published', statuses: ['published'], empty: 'Nothing published yet.' },
   { key: 'problems', label: 'Problems', statuses: ['error'], empty: 'No problems.' },
   { key: 'all', label: 'All items', statuses: [], empty: 'No items yet. Press the button at the photo table.' },
 ];
