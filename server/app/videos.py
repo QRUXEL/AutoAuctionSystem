@@ -47,8 +47,11 @@ def link_for_item(item_id: int) -> str | None:
 
 
 def fill_tags(text: str, link: str | None) -> str:
-    """Replaces the link tag; without a link, drops each line that holds a tag."""
+    """Replaces the link tag; without a link, drops each line that holds a tag.
+    With a link but no tag anywhere, a line with the link is added at the end."""
     if link:
+        if not TAG.search(text):
+            return text.rstrip() + f"\n\nSe videon: {link}"
         return TAG.sub(link, text)
     return "\n".join(line for line in text.split("\n") if not TAG.search(line)).strip("\n")
 

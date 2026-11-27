@@ -259,8 +259,8 @@ export function ItemPage() {
                   </Group>
                 )}
                 <Text size="xs" c="dimmed" mt={4}>
-                  Write <Code>{'<video link>'}</Code> in the description (or in the footer text under Settings) where the link should go.
-                  It is filled in when you publish.
+                  Put <Code>{'<video link>'}</Code> in the description (or the footer under Settings) where the link should go;
+                  without it, a "Se videon: …" line is added at the end when you send.
                 </Text>
               </Paper>
             ))}

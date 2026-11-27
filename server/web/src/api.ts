@@ -49,6 +49,7 @@ export interface Info {
   camera_offset: number | null;
   campaign_code: string;
   video_host: string | null;
+  video_site: { configured: boolean; base_url: string; warning: string; uploaded: number; failed: number; last_error: string | null };
 }
 
 export interface SecretState { set: boolean; hint: string; source: 'settings' | 'env' | 'none' }

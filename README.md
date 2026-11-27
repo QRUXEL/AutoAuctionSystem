@@ -96,7 +96,7 @@ The Claude API key for descriptions is set on the Settings page too. Values save
 listing links to it. Set `AUCTION_VIDEO_SECRET` in Coolify (and keep `AUCTION_VIDEO_BASE_URL=https://streamhjalpen.tv`: other host
 names redirect, which breaks uploads). As soon as the web copy is ready, the server uploads it, then the framed hero photo as poster;
 the title follows when it is edited, and the Tradera item ID once the listing is live (the page then shows "Lägg bud på Tradera").
-Write `<video link>` in the description or footer where the link should go. Publishing waits for the upload, so no listing goes out
+Write `<video link>` in the description or footer where the link should go; without it, a "Se videon: …" line is added at the end. The Settings page shows where videos go and has a **Test** button for the address and secret. Publishing waits for the upload, so no listing goes out
 with a dead link. Deleting an item, or moving its video out, removes the video from the site. Each item's progress is shown on its
 page, with **Retry** after an error; 400/401/413 answers are not retried on their own, network errors and 5xx are (5 attempts with
 backoff, then again every minute). Without the secret, videos use this server's own `/v/<token>` pages instead.

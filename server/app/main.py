@@ -121,7 +121,7 @@ def info():
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
             "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
             "campaign_code": config.settings().get("campaign_code") or "",
-            "video_host": videohost.BASE_URL if videohost.configured() else None}
+            "video_host": videohost.BASE_URL if videohost.configured() else None, "video_site": videohost.summary()}
 
 
 @app.get("/api/items")
@@ -496,6 +496,8 @@ def test_settings(what: str):
         return describe.check()
     if what == "tradera":
         return tradera.check()
+    if what == "video":
+        return videohost.test()
     raise HTTPException(404)
 
 

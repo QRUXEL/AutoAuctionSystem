@@ -158,10 +158,24 @@ export function SettingsPage() {
         )}
       </Section>
 
-      <Section title="Video links">
-        <TextInput label="Public address of this site" placeholder="https://aas.qruxel.productions"
-          description="Used to build the video links that replace <video link> in descriptions. Video pages need no password."
-          value={draft.values.PUBLIC_BASE_URL} onChange={(e) => setValue('PUBLIC_BASE_URL', e.currentTarget.value)} />
+      <Section title="Video links" test="video">
+        {info?.video_site?.configured ? (
+          <Stack gap={4}>
+            <Text size="sm">Videos are uploaded to <b>{info.video_site.base_url}</b> and listings link there
+              ({info.video_site.uploaded} uploaded{info.video_site.failed ? `, ${info.video_site.failed} with errors` : ''}).</Text>
+            {info.video_site.warning && <Alert color="red" variant="light">{info.video_site.warning}</Alert>}
+            {info.video_site.last_error && <Text size="xs" c="red.4">Last error: {info.video_site.last_error}</Text>}
+            <Text size="xs" c="dimmed">Set by AUCTION_VIDEO_BASE_URL and AUCTION_VIDEO_SECRET in Coolify. Press Test to check the address and the secret.</Text>
+          </Stack>
+        ) : (
+          <Text size="sm" c="dimmed">AUCTION_VIDEO_SECRET is not set in Coolify, so videos are linked to this server's own pages below.</Text>
+        )}
+        <Text size="xs" c="dimmed">The link goes where the description or footer says {'<video link>'}; without that tag, a "Se videon: …" line is added at the end.</Text>
+        {!info?.video_site?.configured && (
+          <TextInput label="Public address of this site" placeholder="https://aas.qruxel.productions"
+            description="Used for this server's own video pages. They need no password."
+            value={draft.values.PUBLIC_BASE_URL} onChange={(e) => setValue('PUBLIC_BASE_URL', e.currentTarget.value)} />
+        )}
       </Section>
 
       <Section title="Charity campaign (Musikhjälpen)">
@@ -224,7 +238,7 @@ export function SettingsPage() {
   );
 }
 
-function Section({ title, test, dirty, children }: { title: string; test?: 'claude' | 'tradera'; dirty?: boolean; children: ReactNode }) {
+function Section({ title, test, dirty, children }: { title: string; test?: 'claude' | 'tradera' | 'video'; dirty?: boolean; children: ReactNode }) {
   const [result, setResult] = useState<Record<string, Check | null> | null>(null);
   const [running, setRunning] = useState(false);
   const run = async () => {

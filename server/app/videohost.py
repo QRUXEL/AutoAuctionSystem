@@ -30,7 +30,18 @@ from . import config, db
 
 log = logging.getLogger("videohost")
 
-BASE_URL = os.getenv("AUCTION_VIDEO_BASE_URL", "https://streamhjalpen.tv").rstrip("/")
+BASE_URL = (os.getenv("AUCTION_VIDEO_BASE_URL") or "https://streamhjalpen.tv").strip().rstrip("/")
+if "://" not in BASE_URL:
+    BASE_URL = "https://" + BASE_URL
+# The site answers only on its main host; other names (e.g. with "ä") redirect, which breaks uploads.
+BASE_WARNING = ""
+try:
+    from urllib.parse import urlparse as _u
+    _host = _u(BASE_URL).hostname or ""
+    if not _host.isascii() or _host.startswith("xn--") or _host.startswith("www."):
+        BASE_WARNING = f"AUCTION_VIDEO_BASE_URL is {BASE_URL}; it must be exactly https://streamhjalpen.tv (other names redirect)"
+except Exception:
+    pass
 MAX_VIDEO = 1024 ** 3          # 1 GB
 MAX_POSTER = 10 * 1024 ** 2    # 10 MB
 ATTEMPTS = 5
@@ -317,6 +328,31 @@ def view(item_id: int) -> dict | None:
             "blocked": any(st[s].get("fatal") for s in ("video", "poster", "details") if st.get(s))}
 
 
+def test() -> dict:
+    """Settings page check: reaches the site and proves the secret with a call that changes nothing."""
+    if not configured():
+        return {"ok": False, "message": "AUCTION_VIDEO_SECRET is not set, so videos use this server's own /v pages"}
+    if BASE_WARNING:
+        return {"ok": False, "message": BASE_WARNING}
+    try:
+        # deleting a token that cannot exist: 404 means reachable and the secret is accepted, 401 means a wrong secret
+        _request("DELETE", f"/api/auction-videos/connection-test-{secrets.token_hex(8)}")
+        return {"ok": True, "message": f"{BASE_URL} reached and the secret is accepted"}
+    except HostError as exc:
+        if exc.status == 404:
+            return {"ok": True, "message": f"{BASE_URL} reached and the secret is accepted"}
+        return {"ok": False, "message": str(exc)}
+
+
+def summary() -> dict:
+    rows = db.query("SELECT video_host FROM items WHERE video_host != ''")
+    states = [json.loads(r["video_host"]) for r in rows]
+    up = sum(1 for st in states if st.get("video", {}).get("ok"))
+    failed = [st[s]["error"] for st in states for s in ("video", "poster", "details") if st.get(s) and not st[s].get("ok")]
+    return {"configured": configured(), "base_url": BASE_URL, "warning": BASE_WARNING, "uploaded": up,
+            "failed": len(failed), "last_error": failed[-1] if failed else None}
+
+
 # ---- background worker ---------------------------------------------------------------------------
 def kick():
     _wake.set()
@@ -344,12 +380,14 @@ def start():
         log.info("AUCTION_VIDEO_SECRET is not set: videos are linked to this server's own /v pages")
         return
     log.info("videos are uploaded to %s", BASE_URL)
+    if BASE_WARNING:
+        log.error(BASE_WARNING)
     # errors that a new secret or a switched-on API could fix are tried again after a restart
     for row in db.query("SELECT id, video_host FROM items WHERE video_host LIKE '%\"fatal\": true%'"):
         st = json.loads(row["video_host"])
         for s in ("video", "poster", "details"):
             step = st.get(s) or {}
-            if step.get("fatal") and step.get("status") in (401, 404):
+            if step.get("fatal") and (step.get("status") in (401, 404) or 300 <= (step.get("status") or 0) < 400):
                 st.pop(s)
         _save(row["id"], st)
     threading.Thread(target=_worker, daemon=True, name="videohost").start()
