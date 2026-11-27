@@ -1,5 +1,6 @@
-// Auction station controller (ESP32-S3). Runs the whole capture on its own:
-//   button -> open an item on the server -> 4 x (photo, turn 90 deg) -> film one full turn -> tell the server.
+// Auction station controller (ESP32-S3). Every item has a Start and a Stop (on the server):
+//   Start item -> photos by hand and/or turntable runs (a photo at each stop angle, then a filmed
+//   full turn) -> Stop item. Everything shot in between becomes the one item.
 // Holds two Bluetooth links at once: the Sony camera and the edelkrone HeadONE turntable.
 // The camera uploads the files to the server by itself over Wi-Fi (FTP).
 //
@@ -7,9 +8,10 @@
 //   GET  /                        control page: status, pairing, capture, manual table control, settings
 //   GET  /status                  everything at a glance (JSON)
 //   POST /pair                    retry Bluetooth connects every 10 s for 90 s, forget a stale camera bond
-//   POST /trigger                 run the capture (same as the button)
-//   POST /session/start, /session/stop   open / close an item on the server: every run in between
-//                                 goes into that one item (kits). Also: hold the station button 1 s.
+//   POST /session/start, /session/stop   Start item / Stop item on the server: everything shot in
+//                                 between becomes one item. Also: a short press of the station button.
+//   POST /trigger                 turntable run into the open item (refused when none is open);
+//                                 also: hold the station button 1 s
 //   POST /abort                   stop the running job and the table
 //   GET  /settings                capture settings (JSON); POST /settings?stops=0,90,180,270&photo_speed=0.5 ...
 //                                 changes any of them and keeps them in flash; POST /settings?reset=1 = config.h
@@ -39,7 +41,7 @@
 
 #include "config.h"
 
-#define FIRMWARE_VERSION "2026-11-27.9"
+#define FIRMWARE_VERSION "2026-11-27.11"
 #include "headone.h"
 #include "sony.h"
 
@@ -186,6 +188,14 @@ static volatile bool updating = false;                   // firmware update runn
 static String lastResult = "idle";
 static int lastItem = -1;
 
+// ---- the item open on the server (Start item / Stop item). Every item has a Start and a Stop:
+// everything shot in between, by hand or in turntable runs, goes into it.
+static volatile int sessionItem = 0;                     // 0 = no item open
+static volatile int sessionPhotos = 0, sessionVideos = 0;
+static volatile uint32_t sessionSeconds = 0;
+static volatile int sessionWanted = 0;                   // 1 start, 2 stop: sent by pollTask
+static String sessionNote = "";                          // guarded by noteLock
+
 // hold-to-move: the page repeats /table/drive while a button is held; the job lets go when that stops
 static const uint32_t DRIVE_HOLD_MS = 700;
 static volatile float driveSpeed = 0;
@@ -250,6 +260,8 @@ static bool turnTo(float target, float speed, bool forward, String &err) {
 // filmed full turn starting and ending at 0.
 static bool capture(String &err) {
   const Settings s = cfg;                       // settings changed mid-capture apply next time
+  // Every item has a Start and a Stop: a turntable run only goes into an item that is open.
+  if (sessionItem <= 0) { err = "start an item first"; return false; }
   if (!head.connected()) { err = "turntable not connected: " + getNote(headError); return false; }
   if ((!SHUTTER_VIA_HEAD || s.video) && !camera.connected()) { err = "camera not connected: " + getNote(cameraError); return false; }
   lastItem = openItem(s);
@@ -594,13 +606,6 @@ static void setupArduinoOta() {
   }
 }
 
-// ---- an item open on the server (Start item / Stop item): every run until Stop goes into it ----
-static volatile int sessionItem = 0;                     // 0 = no item open
-static volatile int sessionPhotos = 0, sessionVideos = 0;
-static volatile uint32_t sessionSeconds = 0;
-static volatile int sessionWanted = 0;                   // 1 start, 2 stop: sent by pollTask
-static String sessionNote = "";                          // guarded by noteLock
-
 static String statusJson() {
   String j = "{";
   j += "\"version\":" + quote(FIRMWARE_VERSION);
@@ -751,7 +756,7 @@ background:var(--card);font-size:13px;font-weight:500}.pill small{color:var(--mu
 .pill.wait i{background:var(--warn)}.pill.bad i{background:var(--bad)}.pill.plain{color:var(--mute);border-style:dashed}
 #notes{min-height:0;margin-bottom:4px}#notes:empty{display:none}
 .hero{display:grid;gap:10px;margin:14px 0 8px}.big{font-size:22px;padding:24px 14px;border-radius:14px}
-#sess.open{border-color:var(--acc);color:var(--acc)}button.wide{width:100%;margin-top:6px}
+button.wide{width:100%;margin-top:6px}button.stop.big{grid-column:auto}
 </style>
 <main>
 <div class="top"><h1>Auction station</h1><a class="nav" href="#settings" id="tosettings">Settings ›</a><a class="nav" href="#" id="toback" hidden>‹ Back</a></div>
@@ -762,11 +767,14 @@ background:var(--card);font-size:13px;font-weight:500}.pill small{color:var(--mu
 
 <section id="v-main">
 <div class="hero">
-<button id="cap" class="primary big">Take 4 angles</button>
-<button id="stop" class="stop big" hidden>Stop</button>
-<button id="sess" title="For a kit: every capture until Stop item goes into one listing">Start item (kit)</button>
-</div>
+<button id="sess" class="primary big" title="Everything shot until Stop item becomes one listing">Start item</button>
 <div id="sessinfo" class="hint" hidden></div>
+<div class="grid2">
+<button id="cap" title="Turntable run: a photo at each stop, then the video">Take 4 angles</button>
+<button id="shot1" title="Fire the camera's shutter">Take a photo</button>
+</div>
+<button id="stop" class="stop" hidden>Stop</button>
+</div>
 <button id="pair" class="small wide" hidden>Start pairing</button>
 <p class="hint" id="pairhint" hidden>Pairing is open. On the camera: <b>Bluetooth Rmt Ctrl</b> on, then <b>Bluetooth &gt; Pairing</b>. Turn the HeadONE on and close the edelkrone app.</p>
 
@@ -839,15 +847,16 @@ for(const b of [$('pair'),$('pair2')]){b.disabled=s.busy||p;}
 $('pair').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing';$('pair').hidden=linked;
 $('pair2').textContent=p?'Pairing… '+s.pairing_s+' s':'Start pairing again';
 $('pairhint').hidden=!p;
-$('cap').hidden=s.busy;$('cap').disabled=!linked;$('stop').hidden=!s.busy;
-$('cap').title=linked?'':'Camera and turntable must both be connected';
-const open=s.session_item>0;
-$('cap').textContent='Take '+nStops+' angle'+(nStops==1?'':'s')+(open?' into #'+s.session_item:'');
-$('sess').textContent=s.session_pending?'…':open?'Stop item #'+s.session_item:'Start item (kit)';
-$('sess').className=open?'open':'';$('sess').disabled=!!s.session_pending||s.busy;
-$('sessinfo').hidden=!open&&!s.session_note;
-$('sessinfo').textContent=open?'Item #'+s.session_item+' is open: '+s.session_photos+' photos, '+s.session_videos+
-' videos so far. Every capture goes into it until you stop it.':s.session_note;
+const open=s.session_item>0,mins=Math.floor(s.session_seconds/60),secs=String(s.session_seconds%60).padStart(2,'0');
+$('cap').disabled=!linked||s.busy||!open;$('stop').hidden=!s.busy;
+$('cap').title=!open?'Start an item first':linked?'Turntable run: a photo at each stop, then the video':'Camera and turntable must both be connected';
+$('cap').textContent=s.busy&&s.job=='capture'?'Taking photos…':'Take '+nStops+' angle'+(nStops==1?'':'s');
+$('shot1').disabled=!s.camera||s.busy||!open;$('shot1').title=open?'Fire the camera\'s shutter':'Start an item first';
+$('sess').textContent=s.session_pending?'…':open?'Stop item #'+s.session_item:'Start item';
+$('sess').className='big '+(open?'stop':'primary');$('sess').disabled=!!s.session_pending||s.busy;
+$('sessinfo').hidden=false;
+$('sessinfo').textContent=!open&&!s.session_note?'Start an item, shoot it by hand or with the turntable, then stop it.':open?'Open for '+mins+':'+secs+' · '+s.session_photos+' photos, '+s.session_videos+
+' videos so far. Everything you shoot goes into item #'+s.session_item+' until you stop it.':s.session_note;
 $('conn').textContent=s.busy?(JOB[s.job]||'busy')+'…':linked?'ready':'not ready';
 $('ang').textContent=s.table?s.table_angle.toFixed(1)+'°':'–';
 const free=s.table&&!s.busy,driving=s.busy&&s.job=='drive';
@@ -860,7 +869,7 @@ $('setclk').disabled=!s.camera||s.busy||!s.time;}
 async function poll(){try{const r=await fetch('/status',{cache:'no-store'});s=await r.json();fails=0;show();}
 catch(e){if(++fails>1)$('conn').textContent='station not responding…';}setTimeout(poll,s&&s.busy?600:1500);}
 async function post(path,ok){const m=$('msg');m.className='';m.textContent='…';
-try{const r=await fetch(path,{method:'POST'});m.textContent=r.ok?ok:(r.status==409?'Busy, try again in a moment':'Failed ('+r.status+')');
+try{const r=await fetch(path,{method:'POST'});m.textContent=r.ok?ok:(r.status==409?'Busy, try again in a moment':r.status==412?'Start an item first':'Failed ('+r.status+')');
 if(!r.ok)m.className='err';}catch(e){m.className='err';m.textContent='Station not reachable';}
 setTimeout(()=>{if(m.textContent!=='…')m.textContent=''},5000);}
 $('pair').onclick=$('pair2').onclick=()=>post('/pair','Pairing started');
@@ -899,7 +908,7 @@ const goTo=d=>post('/table/goto?deg='+d+'&speed='+spd(),'Going to '+d+'°');
 $('go').onclick=()=>goTo(+$('to').value||0);
 $('tstop').onclick=()=>{release();post('/table/stop','Stopped');};
 $('zero').onclick=()=>post('/table/zero','This position is now 0°');
-$('shot').onclick=()=>post('/camera/shutter','Photo taken');
+$('shot').onclick=$('shot1').onclick=()=>post('/camera/shutter','Photo taken');
 $('rec').onclick=()=>post('/camera/record','Video started / stopped');
 $('setclk').onclick=async()=>{const m=$('msg');m.className='';m.textContent='Setting the camera clock…';
 try{const r=await fetch('/camera/clock',{method:'POST'});const j=await r.json();
@@ -954,7 +963,11 @@ static void setupWeb() {
     reply(code, code == 202 ? "{\"pairing\":true}" : "{\"pairing\":false,\"reason\":\"busy\"}");
   });
   web.on("/status", HTTP_GET, [] { reply(200, statusJson()); });
-  web.on("/trigger", HTTP_POST, [] { bool s = startJob(JOB_CAPTURE); reply(s ? 202 : 409, s ? "{\"started\":true}" : "{\"started\":false,\"reason\":\"busy\"}"); });
+  web.on("/trigger", HTTP_POST, [] {
+    if (sessionItem <= 0) return reply(412, "{\"started\":false,\"reason\":\"start an item first\"}");
+    bool s = startJob(JOB_CAPTURE);
+    reply(s ? 202 : 409, s ? "{\"started\":true}" : "{\"started\":false,\"reason\":\"busy\"}");
+  });
   // Start item / Stop item on the server (a kit: every run until Stop goes into one item).
   // Sent from pollTask so this answers at once; the result shows in /status session_*.
   web.on("/session/start", HTTP_POST, [] { sessionWanted = 1; reply(202, "{\"ok\":true}"); });
@@ -1092,8 +1105,8 @@ void loop() {
   if (updating) return;                                  // no Bluetooth work or captures during an update
   updateLed();                                           // Bluetooth work is on bleTask, server check-in on pollTask
 
-  // Button: a press during a capture stops it. Otherwise a short press captures, and holding it
-  // 1 s opens an item on the server (or closes the open one): the runs in between become one item.
+  // Button: a press during a capture stops it. Otherwise a short press is Start item / Stop item,
+  // and holding it 1 s takes the turntable angles (only while an item is open).
   static uint32_t downAt = 0, lastChange = 0;
   static bool down = false, handled = false;
   bool pressed = digitalRead(BUTTON_PIN) == LOW;
@@ -1105,13 +1118,13 @@ void loop() {
       handled = false;
       if (busy) { abortRequested = true; handled = true; }
     } else if (!handled) {
-      startJob(JOB_CAPTURE);                             // short press
+      sessionWanted = sessionItem > 0 ? 2 : 1;           // short press: Start item / Stop item
     }
   }
-  if (down && !handled && millis() - downAt >= 1000) {   // long press
+  if (down && !handled && millis() - downAt >= 1000) {   // long press: the turntable angles
     handled = true;
-    sessionWanted = sessionItem > 0 ? 2 : 1;
-    led(40, 0, 40);                                      // a purple blink: the press was taken
-    delay(150);
+    bool ok = sessionItem > 0 && startJob(JOB_CAPTURE);
+    led(ok ? 0 : 60, 0, ok ? 60 : 0);                    // blue blink: started; red: start an item first
+    delay(200);
   }
 }
