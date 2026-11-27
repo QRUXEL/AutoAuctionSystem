@@ -3,6 +3,7 @@ export type Status = 'capturing' | 'processing' | 'review' | 'publishing' | 'sen
 export interface Crop { x: number; y: number; w: number; h: number }
 
 export interface Photo {
+  id: number;
   seq: number;
   framed: string | null;
   raw: string;
@@ -30,6 +31,7 @@ export interface Item {
   tradera_item_id: number | null;
   tradera_pending_item_id: number | null;
   sent_at: number | null;
+  manual_order: number;
   changed_since_sent: boolean;
   published_at: number | null;
   expected_photos: number;

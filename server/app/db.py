@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS files (
 MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''",   # videohost.py: what has been sent to streamhjalpen.tv
                         "tradera_pending_item_id": "INTEGER",  # item id of a request sent but not committed
                         "tradera_sent_sig": "TEXT DEFAULT ''", # fingerprint of what was sent, to catch edits before Go live
-                        "sent_at": "REAL"},
+                        "sent_at": "REAL",
+                        "manual_order": "INTEGER DEFAULT 0"},  # photos put in order by hand: keep it when files are added
               "files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera
                         "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)

@@ -5,9 +5,8 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
-  IconAdjustmentsHorizontal, IconAlertCircle, IconArrowBackUp, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
-  IconSparkles, IconTrash,
-} from '@tabler/icons-react';
+  IconAdjustmentsHorizontal, IconAlertCircle, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
+  IconSparkles, IconTrash, IconChevronLeft, IconChevronRight, IconStar } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -112,6 +111,24 @@ export function ItemPage() {
     refresh();
     notifications.show({ color: 'green', message: 'Going live on Tradera…' });
   });
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const reorder = async (order: number[] | null, select?: number) => {
+    setBusy('order');
+    try {
+      refresh(await api<Item>(`/api/items/${id}/photos/order`, { method: 'PUT', body: { order } }));
+      if (select !== undefined) setSelected(select);
+    } catch (e) {
+      notifications.show({ color: 'red', title: 'Could not reorder', message: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+  /** Moves the photo at index `from` to index `to` (0 = main photo). */
+  const move = (from: number, to: number) => {
+    if (!item || from === to || to < 0 || to >= item.photos.length) return;
+    const seqs = item.photos.map((p) => p.seq);
+    const [moved] = seqs.splice(from, 1);
+    seqs.splice(to, 0, moved);
+    void reorder(seqs, to);
+  };
   const rewrite = act('rewrite', async () => {
     await api(`/api/items/${id}/regenerate`, { method: 'POST', body: { photos: false, text: true } });
     setDirty(false);
@@ -186,9 +203,13 @@ export function ItemPage() {
                   )}
                 </Group>
                 <Group gap={4}>
-                <Tooltip label="Wrong photo? Moves it to Loose shots, where you can delete it or add it to another item">
-                  <Button size="xs" variant="subtle" color="gray" leftSection={<IconArrowBackUp size={14} />}
-                    onClick={detach('photo', photo.seq)} loading={busy === 'detach'} disabled={locked}>Move out</Button>
+                <Tooltip label={selected === 0 ? 'This is the main photo: it is shown first and as the thumbnail on Tradera' : 'Shown first and as the thumbnail on Tradera'}>
+                  <Button size="xs" variant="subtle" color="yellow" leftSection={<IconStar size={14} />}
+                    onClick={() => move(selected, 0)} loading={busy === 'order'} disabled={locked || selected === 0}>Make main photo</Button>
+                </Tooltip>
+                <Tooltip label="Removes the photo from this item. It goes to Loose shots, where you can delete it for good or put it back">
+                  <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={14} />}
+                    onClick={detach('photo', photo.seq)} loading={busy === 'detach'} disabled={locked || item.photos.length < 2}>Remove</Button>
                 </Tooltip>
                 <Tooltip label="Frame all photos again, for example after changing the logo or frame">
                   <Button size="xs" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} onClick={reframe}
@@ -199,16 +220,41 @@ export function ItemPage() {
             )}
             <Group gap="xs">
               {item.photos.map((p, i) => (
-                <UnstyledButton key={p.seq} onClick={() => setSelected(i)}>
+                <UnstyledButton key={p.id} onClick={() => setSelected(i)} draggable={!locked}
+                  onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
+                  onDragOver={(e) => { if (dragFrom !== null) e.preventDefault(); }}
+                  onDrop={(e) => { e.preventDefault(); if (dragFrom !== null) move(dragFrom, i); setDragFrom(null); }}
+                  onDragEnd={() => setDragFrom(null)}>
                   <Box w={84} h={84} style={{
-                    borderRadius: 8, overflow: 'hidden', position: 'relative',
+                    borderRadius: 8, overflow: 'hidden', position: 'relative', opacity: dragFrom === i ? 0.4 : 1,
+                    cursor: locked ? 'pointer' : 'grab',
                     outline: i === selected ? '2px solid var(--mantine-primary-color-filled)' : '1px solid var(--mantine-color-dark-4)',
                   }}>
-                    {p.framed && <Image src={p.framed} w={84} h={84} fit="contain" bg="dark.8" alt="" />}
+                    {p.framed && <Image src={p.framed} w={84} h={84} fit="contain" bg="dark.8" alt="" draggable={false} />}
                     {p.manual_crop && <IconCrop size={14} style={{ position: 'absolute', right: 4, top: 4, color: 'white' }} />}
+                    {i === 0 && (
+                      <Badge size="xs" color="yellow" variant="filled" style={{ position: 'absolute', left: 4, bottom: 4 }}>Main</Badge>
+                    )}
                   </Box>
                 </UnstyledButton>
               ))}
+              {!locked && item.photos.length > 1 && (
+                <Stack gap={2}>
+                  <Group gap={2}>
+                    <Tooltip label="Move the selected photo left">
+                      <ActionIcon variant="default" size="sm" disabled={selected === 0 || busy === 'order'} onClick={() => move(selected, selected - 1)}
+                        aria-label="Move left"><IconChevronLeft size={14} /></ActionIcon>
+                    </Tooltip>
+                    <Tooltip label="Move the selected photo right">
+                      <ActionIcon variant="default" size="sm" disabled={selected >= item.photos.length - 1 || busy === 'order'}
+                        onClick={() => move(selected, selected + 1)} aria-label="Move right"><IconChevronRight size={14} /></ActionIcon>
+                    </Tooltip>
+                  </Group>
+                  {!!item.manual_order && (
+                    <Anchor size="xs" c="dimmed" component="button" onClick={() => reorder(null, 0)}>Shooting order</Anchor>
+                  )}
+                </Stack>
+              )}
               {item.photos.length < item.expected_photos && BUSY.includes(item.status) && (
                 <Text size="sm" c="dimmed">Waiting for {item.expected_photos - item.photos.length} more…</Text>
               )}

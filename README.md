@@ -170,6 +170,9 @@ React + Mantine (dark), in `server/web/`. The Docker image builds it; for local 
 cd server/web && npm install && npm run dev     # proxies /api to a server on :8080
 ```
 Photos can be re-cropped per item (the crop box has the frame's shape); the manual crop is kept when photos are re-framed.
+Photos can be put in order by dragging the thumbnails (or with the arrows, on a phone); **Make main photo** puts one first. The first
+photo is the listing's main photo and thumbnail on Tradera, and the video's poster. **Remove** moves a photo to Loose shots, where
+it can be deleted or added back. A manual order is kept when photos are added; **Shooting order** puts them back.
 
 ## Photo layout
 Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.

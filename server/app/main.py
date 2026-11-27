@@ -69,7 +69,8 @@ def item_json(item: dict) -> dict:
         "seq": f["seq"],
         "framed": _url(f["framed"]),
         "raw": f"/media/{f['raw']}",
-        "preview": f"/api/items/{item['id']}/photos/{f['seq']}/preview",
+        "id": f["id"],
+        "preview": f"/api/items/{item['id']}/photos/{f['seq']}/preview?f={f['id']}",
         "crop": json.loads(f["crop"] or f["crop_auto"] or "null"),
         "manual_crop": bool(f["crop"]),
         "adjust": json.loads(f["adjust"]) if f["adjust"] else {"brightness": 0, "contrast": 0},
@@ -193,10 +194,22 @@ def delete_item(item_id: int):
 @app.get("/api/items/{item_id}/photos/{seq}/preview")
 def photo_preview(item_id: int, seq: int):
     f = get_photo(item_id, seq)
-    out = config.ITEMS / str(item_id) / "preview" / f"{seq:02d}.jpg"
+    out = config.ITEMS / str(item_id) / "preview" / f"p{f['id']}.jpg"     # by file, so reordering can't mix them up
     if not out.exists():
         imaging.preview(config.ITEMS / f["raw"], out)
     return FileResponse(out, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.put("/api/items/{item_id}/photos/order")
+def reorder_photos(item_id: int, body: dict = Body(...)):
+    """{"order": [3, 1, 2, 4]} puts photo 3 first (the main photo on Tradera); {"order": null} restores shooting order."""
+    editable(get_item(item_id))
+    try:
+        ingest.reorder_photos(item_id, body.get("order"))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    videohost.kick()          # the first photo is also the video's poster
+    return item_json(get_item(item_id))
 
 
 @app.put("/api/items/{item_id}/photos/{seq}/crop")

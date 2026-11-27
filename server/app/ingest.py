@@ -205,10 +205,14 @@ def detach(item_id: int, kind: str, seq: int):
 
 
 def _renumber(item_id: int):
-    """Puts an item's photos and videos back in the order they were shot."""
+    """Puts an item's photos and videos in the order they were shot; photos put in order by hand keep
+    that order, with newly added ones after them."""
+    item = db.one("SELECT manual_order FROM items WHERE id = ?", item_id)
+    manual = bool(item and item["manual_order"])
     for kind in ("photo", "video"):
-        rows = db.query("SELECT id FROM files WHERE item_id = ? AND kind = ? ORDER BY COALESCE(shot_at, received_at), id",
-                        item_id, kind)
+        # an added file gets the next number, so ordering by number keeps the manual order with it last
+        order = "seq, id" if manual and kind == "photo" else "COALESCE(shot_at, received_at), id"
+        rows = db.query(f"SELECT id FROM files WHERE item_id = ? AND kind = ? ORDER BY {order}", item_id, kind)
         for i, r in enumerate(rows, 1):
             db.run("UPDATE files SET seq = ? WHERE id = ?", i, r["id"])
 
@@ -243,11 +247,31 @@ def reprocess(item_id: int, photos: bool = True, text: bool = True):
     _start_processing(item_id, photos, text)
 
 
+def reorder_photos(item_id: int, order: list | None):
+    """order: the current photo numbers in their new order; None puts them back in shooting order."""
+    with db.lock():
+        rows = db.query("SELECT id, seq FROM files WHERE item_id = ? AND kind = 'photo'", item_id)
+        if order is None:
+            db.update_item(item_id, manual_order=0)
+            _renumber(item_id)
+            return
+        by_seq = {r["seq"]: r["id"] for r in rows}
+        if sorted(order) != sorted(by_seq):
+            raise ValueError("The order must list every photo of the item once")
+        for i, seq in enumerate(order, 1):
+            db.run("UPDATE files SET seq = ? WHERE id = ?", -i, by_seq[seq])     # two passes: no clash mid-way
+        db.run("UPDATE files SET seq = -seq WHERE item_id = ? AND kind = 'photo'", item_id)
+        db.update_item(item_id, manual_order=1)
+
+
 def frame_one(f: dict, cfg: dict | None = None):
     """(Re)frames one photo, honouring its manual crop. Returns the cropped image for the AI."""
     cfg = cfg or imaging.frame_config()
     raw = config.ITEMS / f["raw"]
-    framed_rel = f"{f['item_id']}/framed/{f['seq']:02d}.jpg"
+    # named by the file, not its position, so reordering photos never makes two of them share a file
+    framed_rel = f"{f['item_id']}/framed/p{f['id']}.jpg"
+    if f.get("framed") and f["framed"] != framed_rel:
+        (config.ITEMS / f["framed"]).unlink(missing_ok=True)
     manual = json.loads(f["crop"]) if f.get("crop") else None
     adjust = json.loads(f["adjust"]) if f.get("adjust") else None
     used = imaging.frame_photo(raw, config.ITEMS / framed_rel, item_ref=f"#{f['item_id']:04d}", cfg=cfg, manual=manual,
