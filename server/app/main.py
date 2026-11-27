@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos
+from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos, videohost
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -28,6 +28,7 @@ async def lifespan(_app):
     db.init()
     ingest.start()
     videos.start()
+    videohost.start()
     ftp.start()
     yield
 
@@ -74,9 +75,13 @@ def item_json(item: dict) -> dict:
         "adjust": json.loads(f["adjust"]) if f["adjust"] else {"brightness": 0, "contrast": 0},
         "name": f["name"],
     } for f in files if f["kind"] == "photo"]
+    host = videohost.view(item["id"])
+    item["video_host"] = host
     item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"],
-                       "public_url": videos.public_url(f["token"]) if f["token"] else None,
-                       "public_path": f"/v/{f['token']}" if f["token"] else None,
+                       # with the video site set up, the public link is streamhjalpen.tv's; otherwise this server's /v page
+                       "public_url": (host or {}).get("url") if host is not None else (videos.public_url(f["token"]) if f["token"] else None),
+                       "public_path": None if host is not None else (f"/v/{f['token']}" if f["token"] else None),
+                       "preview": f"/v/{videos.ensure_token(f['id'])}/video.mp4" if f["web_status"] == "ready" else None,
                        "web_status": f["web_status"] or ""} for f in files if f["kind"] == "video"]
     return item
 
@@ -114,7 +119,8 @@ def info():
     return {"tradera_ready": config.tradera_ready(), "dry_run": config.dry_run(),
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
             "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
-            "campaign_code": config.settings().get("campaign_code") or ""}
+            "campaign_code": config.settings().get("campaign_code") or "",
+            "video_host": videohost.BASE_URL if videohost.configured() else None}
 
 
 @app.get("/api/items")
@@ -153,6 +159,15 @@ def patch_item(item_id: int, body: dict = Body(...)):
     fields = {k: (v if v != "" or k in ("title", "description", "category_path") else None)
               for k, v in body.items() if k in EDITABLE_ITEM}
     db.update_item(item_id, **fields)
+    if "title" in fields:
+        videohost.kick()
+    return item_json(get_item(item_id))
+
+
+@app.post("/api/items/{item_id}/video-host/retry")
+def video_host_retry(item_id: int):
+    get_item(item_id)
+    videohost.retry(item_id)
     return item_json(get_item(item_id))
 
 
@@ -168,6 +183,7 @@ def delete_item(item_id: int):
     item = get_item(item_id)
     if item["status"] in ("publishing", "published"):
         raise HTTPException(409, "Published items are kept as a record")
+    videohost.forget(item_id)
     db.run("DELETE FROM files WHERE item_id = ?", item_id)
     db.run("DELETE FROM items WHERE id = ?", item_id)
     return {"ok": True}
@@ -241,7 +257,11 @@ def _publish(item_id: int):
     paths = [config.ITEMS / p["framed"] for p in photos if p["framed"]]
     settings = config.settings()
     try:
-        video_url = videos.link_for_item(item_id)
+        if videohost.configured():
+            # dry runs don't upload; they use the link if the background upload has already happened
+            video_url = (videohost.view(item_id) or {}).get("url") if config.dry_run() else videohost.link_for_publish(item_id)
+        else:
+            video_url = videos.link_for_item(item_id)
         if config.dry_run():
             payload = tradera.build_payload(item, settings, video_url)
             note = ""
@@ -259,6 +279,7 @@ def _publish(item_id: int):
         result = tradera.publish(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
         db.update_item(item_id, status="published", message="", published_at=db.now(),
                        tradera_request_id=result["request_id"], tradera_item_id=result["item_id"])
+        videohost.kick()          # tells the video page which Tradera item it belongs to
     except Exception as exc:
         log.exception("publishing item %s failed", item_id)
         db.update_item(item_id, status="error", message=f"Publishing failed: {exc}")

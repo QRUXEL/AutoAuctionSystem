@@ -31,7 +31,8 @@ export interface Item {
   published_at: number | null;
   expected_photos: number;
   photos: Photo[];
-  videos: { seq: number; url: string; name: string; public_url: string | null; public_path: string | null; web_status: '' | 'queued' | 'working' | 'ready' | 'failed' }[];
+  video_host: { url: string | null; video: boolean; poster: boolean; tradera_linked: boolean; error: string | null; blocked: boolean } | null;
+  videos: { seq: number; url: string; name: string; public_url: string | null; public_path: string | null; preview: string | null; web_status: '' | 'queued' | 'working' | 'ready' | 'failed' }[];
 }
 
 export interface Info {
@@ -43,6 +44,7 @@ export interface Info {
   loose: number;
   camera_offset: number | null;
   campaign_code: string;
+  video_host: string | null;
 }
 
 export interface SecretState { set: boolean; hint: string; source: 'settings' | 'env' | 'none' }

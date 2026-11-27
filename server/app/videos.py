@@ -40,7 +40,8 @@ def public_url(token: str) -> str:
 
 
 def link_for_item(item_id: int) -> str | None:
-    """Public address of the item's first video, or None."""
+    """Address of the item's first video on this server's own /v pages, or None.
+    Only used when no AUCTION_VIDEO_SECRET is set; otherwise videohost.py gives the streamhjalpen.tv link."""
     f = db.one("SELECT id FROM files WHERE item_id = ? AND kind = 'video' ORDER BY seq LIMIT 1", item_id)
     return public_url(ensure_token(f["id"])) if f else None
 
@@ -77,6 +78,8 @@ def _transcode(file_id: int):
         subprocess.run(cmd, check=True, capture_output=True, timeout=3 * 3600)
         tmp.replace(out)
         db.run("UPDATE files SET web = ?, web_status = 'ready' WHERE id = ?", rel, file_id)
+        from . import videohost
+        videohost.kick()
         log.info("web copy ready for video %s (%.1f MB)", file_id, out.stat().st_size / 1e6)
     except Exception as exc:
         tmp.unlink(missing_ok=True)

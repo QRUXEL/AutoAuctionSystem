@@ -79,7 +79,15 @@ With no code set, listings are ordinary auctions.
 
 The Claude API key for descriptions is set on the Settings page too. Values saved there override the environment variables in Coolify.
 
-Tradera's API takes images only, so the spin video is kept on the server (viewable and downloadable from the review page) but is not attached to the listing.
+**Videos:** Tradera's API takes images only, so each item's spin video goes to a public page on https://streamhjalpen.tv and the
+listing links to it. Set `AUCTION_VIDEO_SECRET` in Coolify (and keep `AUCTION_VIDEO_BASE_URL=https://streamhjalpen.tv`: other host
+names redirect, which breaks uploads). As soon as the web copy is ready, the server uploads it, then the framed hero photo as poster;
+the title follows when it is edited, and the Tradera item ID once the listing is live (the page then shows "Lägg bud på Tradera").
+Write `<video link>` in the description or footer where the link should go. Publishing waits for the upload, so no listing goes out
+with a dead link. Deleting an item, or moving its video out, removes the video from the site. Each item's progress is shown on its
+page, with **Retry** after an error; 400/401/413 answers are not retried on their own, network errors and 5xx are (5 attempts with
+backoff, then again every minute). Without the secret, videos use this server's own `/v/<token>` pages instead.
+`python tools/test_video_host.py` tests the uploader; `tools/mock_video_site.py` stands in for the site in rehearsals.
 
 ### 2. Server (Coolify)
 1. Copy `server/.env.example` to `.env` and fill it in. `FTP_PUBLIC_HOST` must be the LAN address the camera uses to reach the server.

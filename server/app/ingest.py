@@ -200,6 +200,8 @@ def detach(item_id: int, kind: str, seq: int):
             db.run("UPDATE files SET seq = ? WHERE id = ?", i, rest["id"])
         if kind == "photo":
             _start_processing(item_id, photos=True, text=False)
+    from . import videohost
+    videohost.kick()          # an item that lost its video has it removed from the site
 
 
 def _renumber(item_id: int):
@@ -270,6 +272,8 @@ def process(item_id: int, photos: bool = True, text: bool = True):
             log.exception("describe failed for item %s", item_id)
             fields["ai_notes"] = f"AI description failed: {exc}"
     db.update_item(item_id, **fields)
+    from . import videohost
+    videohost.kick()          # the framed hero photo is the video's poster; titles may have changed
 
 
 def _worker():

@@ -220,8 +220,8 @@ export function ItemPage() {
                     <Anchor size="sm" href={v.url} download>Download original</Anchor>
                   </Group>
                 </Group>
-                {v.web_status === 'ready' && v.public_path
-                  ? <video src={`${v.public_path}/video.mp4`} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6, background: '#000' }} />
+                {v.web_status === 'ready' && v.preview
+                  ? <video src={v.preview} controls preload="metadata" style={{ width: '100%', maxHeight: 320, borderRadius: 6, background: '#000' }} />
                   : <Center h={120} bg="dark.8" style={{ borderRadius: 6 }}>
                       {v.web_status === 'failed'
                         ? <Button size="xs" variant="light" onClick={act('webcopy', async () => { await api(`/api/items/${id}/videos/${v.seq}/web-copy`, { method: 'POST' }); refresh(); qc.invalidateQueries({ queryKey: ['item', id] }); })}>Try again</Button>
@@ -230,10 +230,25 @@ export function ItemPage() {
                 {v.public_url && (
                   <Group gap={6} mt={6} wrap="nowrap">
                     <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>Public link:</Text>
-                    <Anchor size="xs" href={v.public_path ?? undefined} target="_blank" truncate style={{ flex: 1 }}>{v.public_url}</Anchor>
+                    <Anchor size="xs" href={v.public_path ?? v.public_url} target="_blank" truncate style={{ flex: 1 }}>{v.public_url}</Anchor>
                     <CopyButton value={v.public_url}>
                       {({ copied, copy }) => <Button size="compact-xs" variant="subtle" onClick={copy}>{copied ? 'Copied' : 'Copy'}</Button>}
                     </CopyButton>
+                  </Group>
+                )}
+                {item.video_host && v.seq === 1 && (
+                  <Group gap={6} mt={6} wrap="nowrap" align="flex-start">
+                    <Badge size="sm" variant="light" color={item.video_host.error ? 'red' : item.video_host.video ? 'green' : 'gray'} style={{ flexShrink: 0 }}>
+                      {item.video_host.error ? 'Upload failed' : item.video_host.video
+                        ? (item.video_host.tradera_linked ? 'On streamhjalpen.tv, linked to Tradera' : item.video_host.poster ? 'On streamhjalpen.tv' : 'On streamhjalpen.tv, poster pending')
+                        : v.web_status === 'ready' ? 'Uploading to streamhjalpen.tv…' : 'Uploaded to streamhjalpen.tv when ready'}
+                    </Badge>
+                    {item.video_host.error && <Text size="xs" c="red.4" style={{ flex: 1 }}>{item.video_host.error}</Text>}
+                    {item.video_host.error && (
+                      <Button size="compact-xs" variant="light" onClick={act('vhretry', async () => {
+                        qc.setQueryData(['item', id], await api(`/api/items/${id}/video-host/retry`, { method: 'POST' }));
+                      })}>Retry</Button>
+                    )}
                   </Group>
                 )}
                 <Text size="xs" c="dimmed" mt={4}>

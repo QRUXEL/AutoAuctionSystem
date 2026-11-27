@@ -27,6 +27,8 @@ services:
       - TRADERA_USER_TOKEN=${TRADERA_USER_TOKEN}
       - TRADERA_DRY_RUN=${TRADERA_DRY_RUN:-1}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://aas.qruxel.productions}
+      - AUCTION_VIDEO_BASE_URL=${AUCTION_VIDEO_BASE_URL:-https://streamhjalpen.tv}
+      - AUCTION_VIDEO_SECRET=${AUCTION_VIDEO_SECRET:-}
     ports:
       - "8095:8080"
       - "2121:2121"
