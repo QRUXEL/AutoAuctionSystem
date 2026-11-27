@@ -177,6 +177,13 @@ it can be deleted or added back. A manual order is kept when photos are added; *
 ## Photo layout
 Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.
 
+## Items with several parts (Start item / Stop item)
+For a lot with several things, or anything shot by hand: press **Start item** in the top bar, shoot as many photos and videos as
+needed (by hand, and/or with **Start capture** turntable runs, which then join the open item instead of opening their own), and press
+**Stop item**. Everything shot in between goes into that one item, in shooting order; test shots before Start or after Stop go to
+Loose shots. The item is processed once the last uploads are in (`GRACE_SECONDS` after Stop or the last upload). An item left open is
+closed after 12 hours. `python tools/test_session.py` runs the scenario against a local server.
+
 ## How files become items
 Matching is by time, so test shots never end up in a listing:
 

@@ -167,7 +167,8 @@ export function ItemPage() {
           <ActionIcon variant="subtle" color="gray" onClick={() => navigate(-1)} aria-label="Back"><IconArrowLeft size={18} /></ActionIcon>
           <Title order={3} ff="monospace">{ref(item.id)}</Title>
           <StatusBadge status={item.status} />
-          {item.source === 'manual' && <Badge variant="outline" color="gray">Shot by hand</Badge>}
+          {item.source === 'manual' && <Badge variant="outline" color="gray">Made from loose shots</Badge>}
+          {item.source === 'session' && <Badge variant="outline" color="gray">Started by hand</Badge>}
           {BUSY.includes(item.status) && <Loader size="xs" />}
         </Group>
         {item.tradera_item_id && (

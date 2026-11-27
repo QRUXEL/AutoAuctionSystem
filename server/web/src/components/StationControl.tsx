@@ -1,6 +1,7 @@
 import { Badge, Button, Group, Indicator, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconCamera, IconPlayerPlay, IconPlayerStop, IconRotate360 } from '@tabler/icons-react';
+import { IconCamera, IconCircleFilled, IconPlayerPlay, IconPlayerStop, IconRotate360, IconSquareFilled } from '@tabler/icons-react';
+import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -11,6 +12,7 @@ export interface StationView {
   last_seen_seconds: number | null;
   pending: 'capture' | 'abort' | null;
   ip: string;
+  session: { item_id: number; seconds: number; photos: number; videos: number } | null;
   status: {
     busy?: boolean; camera?: boolean; table?: boolean; camera_note?: string; table_note?: string;
     table_battery?: number; last?: string; last_item?: number; wifi_rssi?: number; version?: string;
@@ -37,11 +39,41 @@ export function StationControl() {
     } finally { setSending(false); }
   };
 
+  const session = data.session;
+  const toggleSession = async () => {
+    setSending(true);
+    try {
+      const r = await api<{ item_id: number; session: StationView['session'] }>(session ? '/api/session/stop' : '/api/session/start', { method: 'POST' });
+      qc.setQueryData(['station'], { ...data, session: r.session });
+      qc.invalidateQueries({ queryKey: ['info'] });
+      notifications.show({ message: session
+        ? `Item #${String(r.item_id).padStart(4, '0')} stopped. It is processed once the last uploads are in.`
+        : `Item #${String(r.item_id).padStart(4, '0')} started. Everything you shoot now goes into it, until Stop item.` });
+    } catch (e) {
+      notifications.show({ color: 'red', title: 'Did not work', message: (e as Error).message });
+    } finally { setSending(false); }
+  };
+  const elapsed = session ? `${Math.floor(session.seconds / 60)}:${String(Math.floor(session.seconds % 60)).padStart(2, '0')}` : '';
+
   const color = !data.online ? 'gray' : busy ? 'blue' : ready ? 'green' : 'yellow';
   const label = !data.online ? 'Station offline' : busy ? 'Capturing' : ready ? 'Station ready' : 'Station not ready';
 
   return (
     <Group gap="xs" wrap="nowrap">
+      {session ? (
+        <Group gap={6} wrap="nowrap">
+          <Badge component={Link} to={`/items/${session.item_id}`} color="red" variant="light" style={{ cursor: 'pointer' }}
+            leftSection={<IconCircleFilled size={8} />}>
+            #{String(session.item_id).padStart(4, '0')} · {session.photos} photo{session.photos === 1 ? '' : 's'}
+            {session.videos ? ` · ${session.videos} video${session.videos === 1 ? '' : 's'}` : ''} · {elapsed}
+          </Badge>
+          <Button size="xs" color="red" leftSection={<IconSquareFilled size={12} />} loading={sending} onClick={toggleSession}>Stop item</Button>
+        </Group>
+      ) : (
+        <Tooltip label="Opens one item: every photo and video shot until Stop item goes into it, by hand or with turntable runs">
+          <Button size="xs" variant="light" color="red" leftSection={<IconCircleFilled size={10} />} loading={sending} onClick={toggleSession}>Start item</Button>
+        </Tooltip>
+      )}
       <Popover width={300} position="bottom-end" withArrow shadow="md">
         <Popover.Target>
           <Badge component="button" variant="light" color={color} style={{ cursor: 'pointer' }}
@@ -74,7 +106,8 @@ export function StationControl() {
         <Button size="xs" color="red" variant="light" leftSection={<IconPlayerStop size={14} />} loading={sending || data.pending === 'abort'}
           onClick={() => send('abort')}>Stop</Button>
       ) : (
-        <Tooltip label={!data.online ? 'The station is offline' : !ready ? 'Camera or turntable not connected' : 'Photographs and films the item on the turntable'}>
+        <Tooltip label={!data.online ? 'The station is offline' : !ready ? 'Camera or turntable not connected'
+          : session ? `A turntable run, shot into the open item #${String(session.item_id).padStart(4, '0')}` : 'Photographs and films the item on the turntable'}>
           <Button size="xs" leftSection={<IconPlayerPlay size={14} />} disabled={!ready} loading={sending}
             onClick={() => send('capture')}>Start capture</Button>
         </Tooltip>

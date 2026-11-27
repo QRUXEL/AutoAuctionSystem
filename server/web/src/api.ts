@@ -17,7 +17,7 @@ export interface Photo {
 export interface Item {
   id: number;
   status: Status;
-  source: 'station' | 'manual';
+  source: 'station' | 'manual' | 'session';
   created_at: number;
   title: string;
   description: string;

@@ -24,10 +24,52 @@ VIDEO_EXT = {".mp4", ".mov"}
 LOOSE_DIR = "loose"
 MARGIN = 3.0             # seconds of slack around a capture window
 STALE_WINDOW = 900       # an item whose end never arrives stops matching files after this
+SESSION_MAX = 12 * 3600  # an item opened with Start item and never stopped closes after this
 _work: "queue.Queue[tuple]" = queue.Queue()
 
 
+def open_session() -> int:
+    """Start item: everything shot until stop_session() goes into one item, any number of photos and videos,
+    by hand or with turntable runs (which join this item instead of opening their own)."""
+    with db.lock():
+        cur = current_session()
+        if cur:
+            return cur["id"]
+        s = config.settings()
+        item_id = db.run(
+            "INSERT INTO items (status, source, created_at, expected_photos, expected_videos, start_price, duration_days)"
+            " VALUES ('capturing', 'session', ?, 0, 0, ?, ?)", db.now(), s["start_price"], s["duration_days"])
+        log.info("item %s: started by hand", item_id)
+        return item_id
+
+
+def current_session() -> dict | None:
+    return db.one("SELECT * FROM items WHERE source = 'session' AND status = 'capturing' AND captured_at IS NULL "
+                  "AND created_at > ? ORDER BY id DESC LIMIT 1", db.now() - SESSION_MAX)
+
+
+def stop_session(item_id: int | None = None) -> int | None:
+    with db.lock():
+        cur = current_session()
+        if not cur or (item_id and cur["id"] != item_id):
+            return None
+        db.update_item(cur["id"], captured_at=db.now())
+        log.info("item %s: stopped by hand", cur["id"])
+        return cur["id"]
+
+
+def _room(item: dict, kind: str) -> bool:
+    """Whether the item still takes a file of this kind. Items started by hand take any number."""
+    if item["source"] == "session":
+        return True
+    return _count(item["id"], kind) < (item["expected_photos"] if kind == "photo" else item["expected_videos"])
+
+
 def open_item(source: str = "station", photos: int | None = None, videos: int | None = None) -> int:
+    cur = current_session()
+    if cur and source == "station":         # a turntable run while an item is open by hand: shoot into that item
+        log.info("item %s: turntable run joins the item started by hand", cur["id"])
+        return cur["id"]
     s = config.settings()
     return db.run(
         "INSERT INTO items (status, source, created_at, expected_photos, expected_videos, start_price, duration_days)"
@@ -58,11 +100,10 @@ def camera_offset(latest: float | None = None) -> float | None:
 def _windows() -> list:
     now = db.now()
     out = []
-    for item in db.query("SELECT * FROM items WHERE source = 'station' AND created_at > ? ORDER BY id",
+    for item in db.query("SELECT * FROM items WHERE source IN ('station', 'session') AND created_at > ? ORDER BY id",
                          now - 2 * 86400):
-        end = item["captured_at"] or min(now, item["created_at"] + STALE_WINDOW)
-        if not item["captured_at"] and now - item["created_at"] > STALE_WINDOW:
-            end = item["created_at"] + STALE_WINDOW
+        limit = SESSION_MAX if item["source"] == "session" else STALE_WINDOW
+        end = item["captured_at"] or min(now, item["created_at"] + limit)
         out.append((item["created_at"] - MARGIN, end + MARGIN, item))
     return out
 
@@ -73,7 +114,7 @@ def _match(t: float | None, kind: str):
         return None
     hits = [item for start, end, item in _windows() if start <= t <= end]
     if kind == "photo":
-        hits = [i for i in hits if i["status"] == "capturing" or _count(i["id"], "photo") < i["expected_photos"]]
+        hits = [i for i in hits if i["status"] == "capturing" or _room(i, "photo")]
     return hits[-1] if hits else None
 
 
@@ -86,11 +127,10 @@ def _video_item(cam: float | None, received: float):
         for hours in sorted(range(-14, 15), key=abs):
             t = cam + offset + hours * 3600
             item = _match(t, "video")
-            if item and _count(item["id"], "video") < item["expected_videos"]:
+            if item and _room(item, "video"):
                 return item, t
     for start, end, item in reversed(_windows()):
-        if item["captured_at"] and 0 <= received - item["captured_at"] < 3600 and \
-                _count(item["id"], "video") < item["expected_videos"]:
+        if item["captured_at"] and 0 <= received - item["captured_at"] < 3600 and _room(item, "video"):
             return item, None
     return None, None
 
@@ -150,7 +190,7 @@ def file_received(path: Path):
             return
         db.update_item(item["id"], last_file_at=received)
         log.info("item %s: %s %s (%s)", item["id"], kind, seq, path.name)
-        if kind == "photo" and item["status"] == "capturing" and seq >= item["expected_photos"]:
+        if kind == "photo" and item["status"] == "capturing" and item["source"] != "session" and seq >= item["expected_photos"]:
             _start_processing(item["id"])
         elif kind == "photo" and item["status"] in ("review", "error"):
             _start_processing(item["id"], photos=True, text=False)   # arrived late: frame it in
@@ -318,13 +358,15 @@ def _watchdog():
         grace = config.get("GRACE_SECONDS")
         for item in db.query("SELECT * FROM items WHERE status = 'capturing'"):
             n = _count(item["id"], "photo")
-            ended = item["captured_at"] or (item["created_at"] + STALE_WINDOW if now - item["created_at"] > STALE_WINDOW else None)
+            limit = SESSION_MAX if item["source"] == "session" else STALE_WINDOW
+            ended = item["captured_at"] or (item["created_at"] + limit if now - item["created_at"] > limit else None)
             if not ended or now - max(ended, item["last_file_at"] or 0) < grace:
                 continue
             if n:
                 note = "" if n >= item["expected_photos"] else f"Only {n} of {item['expected_photos']} photos were shot during the capture."
                 if not item["captured_at"]:
-                    note = (note + " The station never reported the end of the capture.").strip()
+                    note = (note + (" Stop item was never pressed; it was closed after 12 hours." if item["source"] == "session"
+                                    else " The station never reported the end of the capture.")).strip()
                 _start_processing(item["id"])
                 db.update_item(item["id"], message=note)
             else:

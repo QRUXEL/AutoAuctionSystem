@@ -145,7 +145,9 @@ async def open_item(request: Request):
 
 @app.post("/api/items/{item_id}/captured")
 def captured(item_id: int):
-    get_item(item_id)
+    item = get_item(item_id)
+    if item["source"] == "session":       # a turntable run inside an item started by hand: the item stays open
+        return {"ok": True, "session": True}
     db.update_item(item_id, captured_at=db.now())
     return {"ok": True}
 
@@ -665,9 +667,31 @@ def station_poll(request: Request, body: dict = Body(default={})):
     return {"command": station.checked_in(status, request.client.host if request.client else "")}
 
 
+@app.post("/api/session/start")
+def session_start():
+    return {"item_id": ingest.open_session(), **_session_view()}
+
+
+@app.post("/api/session/stop")
+def session_stop():
+    item_id = ingest.stop_session()
+    if not item_id:
+        raise HTTPException(409, "No item is open")
+    return {"item_id": item_id, **_session_view()}
+
+
+def _session_view() -> dict:
+    cur = ingest.current_session()
+    if not cur:
+        return {"session": None}
+    counts = {k: db.one("SELECT COUNT(*) AS n FROM files WHERE item_id = ? AND kind = ?", cur["id"], k)["n"] for k in ("photo", "video")}
+    return {"session": {"item_id": cur["id"], "started": cur["created_at"], "seconds": db.now() - cur["created_at"],
+                        "photos": counts["photo"], "videos": counts["video"]}}
+
+
 @app.get("/api/station")
 def station_view():
-    return station.view()
+    return {**station.view(), **_session_view()}
 
 
 @app.post("/api/station/command")
@@ -676,7 +700,7 @@ def station_command(body: dict = Body(...)):
         station.request(str(body.get("command", "")))
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    return station.view()
+    return {**station.view(), **_session_view()}
 
 
 # ---- public video pages (no password) -------------------------------------------------
