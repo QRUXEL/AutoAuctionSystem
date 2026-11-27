@@ -32,6 +32,12 @@ export interface Item {
   tradera_pending_item_id: number | null;
   sent_at: number | null;
   manual_order: number;
+  end_at: string | null;
+  listing_end_at: number | null;
+  end_preview: { at: string | null; text: string; how: string };
+  shipping_override: string;
+  shipping_options: Listing['shipping_options'];
+  accepted_bidder_override: number | null;
   changed_since_sent: boolean;
   published_at: number | null;
   expected_photos: number;
@@ -50,6 +56,7 @@ export interface Info {
   loose: number;
   camera_offset: number | null;
   campaign_code: string;
+  accepted_bidder_id: number;
   video_host: string | null;
   video_site: { configured: boolean; base_url: string; warning: string; uploaded: number; failed: number; last_error: string | null };
 }
@@ -64,9 +71,12 @@ export interface Listing {
   accepted_bidder_id: number;
   vat: number | null;
   shipping_condition: string;
-  shipping_options: Record<string, unknown>[];
+  shipping_options: { shippingProviderId?: number; shippingProductId?: number | null; cost?: number; shippingWeight?: number | null; pickup?: boolean; place?: string }[];
   description_footer: string;
   campaign_code: string;
+  end_mode: 'duration' | 'fixed' | 'staggered';
+  end_at: string;
+  end_interval_min: number;
 }
 
 export interface Settings {

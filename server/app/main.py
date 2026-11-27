@@ -14,12 +14,13 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos, videohost
+from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos, videohost, schedule
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
 WEB = Path(__file__).parent / "static"          # the built React app (see web/)
-EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days"}
+EDITABLE_ITEM = {"title", "description", "category_id", "category_path", "start_price", "buy_now_price", "duration_days",
+                 "end_at", "shipping_override", "accepted_bidder_override"}
 STATUSES = ("capturing", "processing", "review", "publishing", "sent", "published", "error")
 
 
@@ -77,6 +78,9 @@ def item_json(item: dict) -> dict:
         "name": f["name"],
     } for f in files if f["kind"] == "photo"]
     item["changed_since_sent"] = item["status"] == "sent" and _changed_since_sent(item["id"])
+    end, how = schedule.resolve(item, config.settings())
+    item["end_preview"] = {"at": schedule.to_local(end) if end else None, "text": (schedule.human(end) if end else "") , "how": how}
+    item["shipping_options"] = tradera.item_shipping(item, config.settings())
     host = videohost.view(item["id"])
     item["video_host"] = host
     item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"],
@@ -122,6 +126,7 @@ def info():
             "ai_ready": bool(config.get("ANTHROPIC_API_KEY")), "photo_aspect": imaging.photo_aspect(),
             "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
             "campaign_code": config.settings().get("campaign_code") or "",
+            "accepted_bidder_id": config.settings().get("accepted_bidder_id"),
             "video_host": videohost.BASE_URL if videohost.configured() else None, "video_site": videohost.summary()}
 
 
@@ -160,8 +165,15 @@ def read_item(item_id: int):
 @app.patch("/api/items/{item_id}")
 def patch_item(item_id: int, body: dict = Body(...)):
     editable(get_item(item_id))
-    fields = {k: (v if v != "" or k in ("title", "description", "category_path") else None)
+    fields = {k: (v if v != "" or k in ("title", "description", "category_path", "end_at") else None)
               for k, v in body.items() if k in EDITABLE_ITEM}
+    if "shipping_override" in fields:          # a list of options, or null for the defaults in Settings
+        v = fields["shipping_override"]
+        if v is not None and not isinstance(v, list):
+            raise HTTPException(422, "shipping_override must be a list or null")
+        fields["shipping_override"] = json.dumps(v) if v is not None else ""
+    if fields.get("end_at") and not schedule.parse_local(fields["end_at"]):
+        raise HTTPException(422, "end_at must be a date and time like 2026-12-13T20:00")
     db.update_item(item_id, **fields)
     if "title" in fields:
         videohost.kick()
@@ -291,8 +303,9 @@ def _publish(item_id: int):
     try:
         item, paths, settings, video_url = _listing(item_id, upload_video=not config.dry_run())
         if config.dry_run():
-            payload = tradera.build_payload(item, settings, video_url)
-            note = ""
+            end, how = schedule.resolve(item, settings)
+            payload = tradera.build_payload(item, settings, video_url, end)
+            note = f" It would end {schedule.human(end)} ({how})." if end else ""
             if payload.get("campaignCode"):
                 if config.tradera_ready():
                     check = tradera.validate_campaign(payload["campaignCode"], payload["categoryId"])
@@ -304,7 +317,9 @@ def _publish(item_id: int):
             db.update_item(item_id, status="review",
                            message="Dry run: nothing was sent to Tradera. The request is saved next to the photos." + note)
             return
-        sent = tradera.send(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url)
+        end_at = schedule.reserve(item_id, settings)
+        sent = tradera.send(item, paths, settings, log=lambda m: log.info("item %s: %s", item_id, m), video_url=video_url,
+                            end_at=end_at)
         if config.get("TRADERA_AUTO_COMMIT"):
             tradera.commit(sent["request_id"])
             _went_live(item_id, sent["request_id"], sent["item_id"])
@@ -345,7 +360,8 @@ def publish(item_id: int):
 
 def _changed_since_sent(item_id: int) -> bool:
     item, paths, settings, video_url = _listing(item_id, upload_video=False)
-    return tradera.signature(tradera.build_payload(item, settings, video_url), paths) != item["tradera_sent_sig"]
+    end, _ = schedule.resolve(item, settings)
+    return tradera.signature(tradera.build_payload(item, settings, video_url, end), paths) != item["tradera_sent_sig"]
 
 
 @app.post("/api/items/{item_id}/go-live")
@@ -471,6 +487,37 @@ def write_settings(body: dict = Body(...)):
         raise HTTPException(422, "shipping_options must be a list")
     config.update_listing(listing)
     return read_settings()
+
+
+@app.get("/api/tradera/shipping-options")
+def shipping_options(country: str = "SE"):
+    if not config.tradera_ready():
+        raise HTTPException(409, "Connect Tradera first")
+    try:
+        return tradera.shipping_products(country.upper()[:2])
+    except Exception as exc:
+        raise HTTPException(502, f"Tradera's shipping list could not be fetched: {exc}")
+
+
+@app.get("/api/tradera/pickup")
+def pickup_support():
+    """Whether Tradera's lists have a 'buyer collects' option. Either way the note tells buyers where to collect."""
+    return {"provider_id": tradera.pickup_provider_id() if config.tradera_ready() else None}
+
+
+@app.get("/api/tradera/bidder-types")
+def bidder_types():
+    try:
+        return tradera.bidder_types() if config.get("TRADERA_APP_ID") else []
+    except Exception:
+        return []
+    
+
+@app.get("/api/settings/end-preview")
+def end_preview():
+    """When the next item sent would end, with the current settings."""
+    end, how = schedule.resolve({"id": 0, "end_at": "", "listing_end_at": None}, config.settings())
+    return {"at": schedule.to_local(end) if end else None, "text": schedule.human(end) if end else "", "how": how}
 
 
 @app.post("/api/settings/campaign-check")

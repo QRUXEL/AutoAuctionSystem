@@ -63,6 +63,9 @@ DEFAULT_LISTING = {
     "shipping_options": [],      # e.g. [{"shippingProviderId": 0, "cost": 69}] from /v4/reference-data/shipping-options
     "description_footer": "",    # appended to every description
     "campaign_code": "",         # Tradera campaign code (e.g. Musikhjälpen); attached to every listing when set
+    "end_mode": "duration",      # duration | fixed | staggered (see schedule.py)
+    "end_at": "",                # local time, e.g. 2026-12-13T20:00: the fixed end, or the first end when staggered
+    "end_interval_min": 2,       # staggered: minutes between one auction's end and the next
 }
 
 _lock = threading.Lock()

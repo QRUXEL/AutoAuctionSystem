@@ -77,6 +77,15 @@ and the button becomes **Send again**, which sends a fresh copy (Tradera's API h
 published). With Auto-publish on, Send commits straight away. Tradera's docs don't say whether unpublished listings show on
 tradera.com or how long they are kept, so don't leave them waiting for days.
 
+**When auctions end** (Settings): after a number of days, all at one fixed time, or one after another (the first at a set
+time, each next one sent X minutes after the previous one). An item can have its own end time, which keeps it out of the line-up;
+an item sent again keeps its end time. Times are Swedish time, sent to Tradera as `customEndDate`.
+
+**Shipping and buyers** (Settings, and per item): Tradera's own shipping products and buyer regions are fetched and cached for a
+day, and chosen with checkboxes and a dropdown; no ids to type. **Buyer collects** adds pickup: sent as Tradera's pickup option when
+its lists have one, and always written in the shipping note ("Kan hämtas hos oss i …"). **Free with DSV in Sweden** picks the DSV
+options at 0 kr; **+ DSV sponsors** adds a line saying so to the shipping note.
+
 **Categories.** The AI picks the category from Tradera's own tree in two steps: first the section (e.g. *Hem & Hushåll > Porslin & Glas*),
 then the category inside it, with word matches added. If it can't decide, the item's notes say so and the category is left for you.
 

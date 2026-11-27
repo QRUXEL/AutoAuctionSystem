@@ -1,5 +1,5 @@
 import {
-  ActionIcon, Alert, Anchor, Autocomplete, Badge, Button, Code, CopyButton, Group, JsonInput, Loader, Center, NumberInput,
+  ActionIcon, Alert, Anchor, Autocomplete, Badge, Button, Code, CopyButton, Group, Loader, Center, NumberInput,
   Paper, PasswordInput, SegmentedControl, Select, SimpleGrid, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -19,6 +19,7 @@ const LOGIN_RESULTS: Record<string, { color: string; text: string }> = {
 
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
+import { BidderSelect, ShippingPicker } from '../components/ShippingPicker';
 import { api, type Check, type Listing, type SecretState, type Settings } from '../api';
 
 type SecretName = keyof Settings['secrets'];
@@ -78,6 +79,7 @@ export function SettingsPage() {
       });
       qc.setQueryData(['settings'], fresh);
       qc.invalidateQueries({ queryKey: ['info'] });
+      qc.invalidateQueries({ queryKey: ['end-preview'] });
       setDirty(false);
       setDraft(fromSettings(fresh));
       notifications.show({ color: 'green', message: 'Settings saved' });
@@ -182,6 +184,39 @@ export function SettingsPage() {
         <CampaignPicker value={draft.listing.campaign_code} onChange={(v) => setListing('campaign_code', v)} traderaReady={!!info?.tradera_ready} />
       </Section>
 
+      <Section title="When auctions end">
+        <SegmentedControl data={[{ value: 'duration', label: 'After a number of days' }, { value: 'fixed', label: 'All at one time' },
+          { value: 'staggered', label: 'One after another' }]}
+          value={draft.listing.end_mode} onChange={(v) => setListing('end_mode', v as Listing['end_mode'])} />
+        {draft.listing.end_mode === 'duration' ? (
+          <Select label="Runs for" data={['1', '3', '5', '7', '10', '14'].map((d) => ({ value: d, label: `${d} day${d === '1' ? '' : 's'}` }))} w={200}
+            value={String(draft.listing.duration_days)} onChange={(v) => v && setListing('duration_days', Number(v))} allowDeselect={false} />
+        ) : (
+          <Group align="flex-end" grow>
+            <TextInput type="datetime-local" label={draft.listing.end_mode === 'fixed' ? 'Every auction ends at' : 'The first auction ends at'}
+              value={draft.listing.end_at} onChange={(e) => setListing('end_at', e.currentTarget.value)} description="Swedish time" />
+            {draft.listing.end_mode === 'staggered' && (
+              <NumberInput label="Then one every" suffix=" min" min={0} max={240} allowDecimal={false} value={draft.listing.end_interval_min}
+                description="Each next item sent ends this much after the previous one" onChange={(v) => setListing('end_interval_min', Number(v) || 0)} />
+            )}
+          </Group>
+        )}
+        <EndPreview dirty={dirty} />
+        <Text size="xs" c="dimmed">An item can also get its own end time on its page. A sent item keeps its end time when it is sent again.</Text>
+      </Section>
+
+      <Section title="Shipping and buyers">
+        <Text size="sm" fw={500}>How items can be sent (defaults; each item can change them)</Text>
+        <ShippingPicker value={draft.listing.shipping_options} onChange={(v) => { setDraft({ ...draft, listing: { ...draft.listing, shipping_options: v }, shipping: JSON.stringify(v) }); setDirty(true); }} />
+        <TextInput label="Shipping note" placeholder="For example: Fri frakt inom Sverige, DSV bjuder. Skickas inom 3 dagar."
+          description="Shown with the shipping options on Tradera"
+          value={draft.listing.shipping_condition} onChange={(e) => setListing('shipping_condition', e.currentTarget.value)}
+          rightSectionWidth={150} rightSection={!/dsv/i.test(draft.listing.shipping_condition) ? (
+            <Button size="compact-xs" variant="subtle" onClick={() => setListing('shipping_condition',
+              `${draft.listing.shipping_condition.trim()} Fri frakt inom Sverige, DSV bjuder.`.trim())}>+ DSV sponsors</Button>) : undefined} />
+        <BidderSelect value={draft.listing.accepted_bidder_id} onChange={(v) => setListing('accepted_bidder_id', v ?? 1)} />
+      </Section>
+
       <Section title="Listing defaults">
         <Group align="flex-end" grow>
           <Stack gap={4}>
@@ -189,25 +224,15 @@ export function SettingsPage() {
             <SegmentedControl data={[{ value: '1', label: 'Auction' }, { value: '3', label: 'Fixed price' }]}
               value={String(draft.listing.item_type)} onChange={(v) => setListing('item_type', Number(v))} />
           </Stack>
-          <Select label="Runs for" data={['3', '5', '7', '10', '14', '30'].map((d) => ({ value: d, label: `${d} days` }))}
-            value={String(draft.listing.duration_days)} onChange={(v) => v && setListing('duration_days', Number(v))} allowDeselect={false} />
           <NumberInput label="Start price" suffix=" kr" min={1} allowDecimal={false} value={draft.listing.start_price}
             onChange={(v) => setListing('start_price', Number(v) || 1)} />
         </Group>
-        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <NumberInput label="Automatic restarts" min={0} max={5} allowDecimal={false} value={draft.listing.restarts}
             onChange={(v) => setListing('restarts', Number(v) || 0)} />
-          <NumberInput label="Accepted bidders ID" min={0} allowDecimal={false} value={draft.listing.accepted_bidder_id}
-            description="From Tradera's accepted-bidder-types list" onChange={(v) => setListing('accepted_bidder_id', Number(v) || 0)} />
           <NumberInput label="VAT %" min={0} max={25} allowDecimal={false} placeholder="Not set" value={draft.listing.vat ?? ''}
             description="Only for business sellers" onChange={(v) => setListing('vat', v === '' ? null : Number(v))} />
         </SimpleGrid>
-        <TextInput label="Shipping condition" placeholder="For example: Skickas inom 3 dagar"
-          value={draft.listing.shipping_condition} onChange={(e) => setListing('shipping_condition', e.currentTarget.value)} />
-        <JsonInput label="Shipping options" autosize minRows={3} formatOnBlur validationError="Not valid JSON"
-          description='List of options, ids from Tradera’s shipping-options list, e.g. [{"shippingProviderId": 1, "cost": 69}]'
-          value={draft.shipping} error={shippingError}
-          onChange={(v) => { setDraft({ ...draft, shipping: v }); setDirty(true); }} />
         <Textarea label="Text added under every description" autosize minRows={2}
           description="Can hold <video link>; the line is left out for items without a video."
           value={draft.listing.description_footer} onChange={(e) => setListing('description_footer', e.currentTarget.value)} />
@@ -386,5 +411,17 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
         Tradera may limit a campaign to some product categories. Without a category, the check uses the one your items use most.
       </Text>
     </Stack>
+  );
+}
+
+/** When the next item sent would end, with the saved settings. */
+function EndPreview({ dirty }: { dirty: boolean }) {
+  const { data } = useQuery({ queryKey: ['end-preview'], queryFn: () => api<{ at: string | null; text: string; how: string }>('/api/settings/end-preview') });
+  if (!data) return null;
+  return (
+    <Text size="sm" c={data.at ? 'teal.4' : 'dimmed'}>
+      {data.at ? `The next item sent ends ${data.text} (${data.how}).` : `Items run for the chosen number of days.`}
+      {dirty && ' Save to update.'}
+    </Text>
   );
 }

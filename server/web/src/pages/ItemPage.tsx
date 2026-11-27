@@ -1,7 +1,6 @@
 import {
   ActionIcon, Alert, Anchor, AspectRatio, Badge, Box, Button, Center, Code, CopyButton, Grid, Group, Image, Loader, Modal, NumberInput,
-  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton,
-} from '@mantine/core';
+  Paper, Select, Stack, Text, Textarea, TextInput, Title, Tooltip, UnstyledButton, Switch } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
@@ -14,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
+import { BidderSelect, bidderName, ShippingPicker } from '../components/ShippingPicker';
 import { AdjustModal } from '../components/AdjustModal';
 import { CropModal } from '../components/CropModal';
 import { StatusBadge } from '../components/StatusBadge';
@@ -25,6 +25,9 @@ interface Form {
   start_price: number | string;
   buy_now_price: number | string;
   duration_days: string;
+  end_at: string;
+  shipping: Item['shipping_options'] | null;      // null = the defaults in Settings
+  bidders: number | null;                          // null = the default in Settings
 }
 
 const toForm = (i: Item): Form => ({
@@ -34,6 +37,9 @@ const toForm = (i: Item): Form => ({
   start_price: i.start_price ?? '',
   buy_now_price: i.buy_now_price ?? '',
   duration_days: String(i.duration_days ?? 7),
+  end_at: i.end_at ?? '',
+  shipping: i.shipping_override ? i.shipping_options : null,
+  bidders: i.accepted_bidder_override ?? null,
 });
 
 const BUSY = ['capturing', 'processing', 'publishing'];
@@ -82,6 +88,7 @@ export function ItemPage() {
         title: form.title, description: form.description,
         category_id: form.category.id, category_path: form.category.path,
         start_price: form.start_price, buy_now_price: form.buy_now_price, duration_days: Number(form.duration_days),
+        end_at: form.end_at, shipping_override: form.shipping, accepted_bidder_override: form.bidders,
       },
     });
     setDirty(false);
@@ -338,9 +345,35 @@ export function ItemPage() {
                 onChange={(v) => set('start_price', v)} />
               <NumberInput label="Buy now" suffix=" kr" min={1} allowDecimal={false} placeholder="Optional" value={form.buy_now_price}
                 disabled={locked} onChange={(v) => set('buy_now_price', v)} />
-              <Select label="Runs for" data={['3', '5', '7', '10', '14'].map((d) => ({ value: d, label: `${d} days` }))}
-                value={form.duration_days} disabled={locked} onChange={(v) => v && set('duration_days', v)} allowDeselect={false} />
+              {!form.end_at && !item.end_preview.at && (
+                <Select label="Runs for" data={['1', '3', '5', '7', '10', '14'].map((d) => ({ value: d, label: `${d} days` }))}
+                  value={form.duration_days} disabled={locked} onChange={(v) => v && set('duration_days', v)} allowDeselect={false} />
+              )}
             </Group>
+            <Group grow align="flex-end">
+              <TextInput type="datetime-local" label="Ends" disabled={locked} value={form.end_at}
+                onChange={(e) => set('end_at', e.currentTarget.value)}
+                description={form.end_at ? 'Set on this item' : item.end_preview.at ? `${item.end_preview.text}: ${item.end_preview.how}` : 'From the number of days'} />
+              {form.end_at && !locked && (
+                <Button variant="subtle" size="xs" onClick={() => set('end_at', '')} style={{ flexGrow: 0 }}>Use Settings</Button>
+              )}
+              <BidderSelect value={form.bidders} disabled={locked} onChange={(v) => set('bidders', v)}
+                defaultLabel={`Default (${bidderName(info?.accepted_bidder_id) || 'Settings'})`} />
+            </Group>
+            <Paper withBorder p="xs" radius="md">
+              <Group justify="space-between" mb={form.shipping ? 6 : 0}>
+                <Text size="sm" fw={500}>Shipping</Text>
+                <Switch size="xs" label="Same as Settings" checked={form.shipping === null} disabled={locked}
+                  onChange={(e) => set('shipping', e.currentTarget.checked ? null : item.shipping_options)} />
+              </Group>
+              {form.shipping === null ? (
+                <Text size="xs" c="dimmed">
+                  {item.shipping_options.length ? `From Settings: ${item.shipping_options.map((o) => (o.pickup ? 'buyer collects' : `${o.cost ? `${o.cost} kr` : 'free'}`)).join(', ')}` : 'Nothing set in Settings'}
+                </Text>
+              ) : (
+                <ShippingPicker value={form.shipping} disabled={locked} onChange={(v) => set('shipping', v)} />
+              )}
+            </Paper>
 
             {!locked && (
               <Stack gap="xs" mt="sm">

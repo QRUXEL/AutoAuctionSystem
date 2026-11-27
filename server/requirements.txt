@@ -5,3 +5,4 @@ pyftpdlib>=2.0
 requests>=2.32
 anthropic>=0.40
 pillow-heif>=0.18
+tzdata

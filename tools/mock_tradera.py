@@ -33,6 +33,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send([]) if self.headers.get("X-User-Token") else self._send({"error": "no user token"}, 401)
         if self.path.startswith("/v4/categories"):
             return self._send(CATEGORIES)
+        if self.path.startswith("/v4/reference-data/shipping-options"):
+            if not self.headers.get("X-User-Token"):
+                return self._send({"error": "no user token"}, 401)
+            def prod(i, prov, pid, name, w, price):
+                return {"id": i, "shippingProvider": prov, "shippingProviderId": pid, "name": name, "weight": w, "price": price,
+                        "toCountry": "SE", "fromCountry": "SE"}
+            return self._send({"productsPerWeightSpan": [
+                {"weight": 1, "products": [prod(101, "PostNord", 7, "Varubrev 1 kg", 1, 59), prod(201, "DHL", 9, "DHL Paket 1 kg", 1, 79)]},
+                {"weight": 5, "products": [prod(102, "PostNord", 7, "Postpaket 5 kg", 5, 119), prod(202, "DHL", 9, "DHL Paket 5 kg", 5, 129),
+                                           prod(302, "DSV", 14, "DSV Paket 5 kg", 5, 99)]},
+                {"weight": 20, "products": [prod(303, "DSV", 14, "DSV Paket 20 kg", 20, 189)]},
+            ]})
+        if self.path.startswith("/v4/reference-data/item-field-values"):
+            return self._send({"vat": [0, 6, 12, 25], "shippingTypes": [{"id": 2, "description": "Postpaket"}, {"id": 6, "description": "Avhämtning"}]})
+        if self.path.startswith("/v4/reference-data/accepted-bidder-types"):
+            return self._send([{"id": 1, "description": "Sverige"}, {"id": 4, "description": "EU"}, {"id": 3, "description": "Internationellt"}])
         if self.path.startswith("/v4/listings/request-results"):
             rid = int(self.path.split("requestIds=")[1])
             req = STATE["requests"].get(rid, {})
@@ -71,7 +87,10 @@ class Handler(BaseHTTPRequestHandler):
         if parts[-1] == "commit":
             STATE["requests"][rid]["committed"] = True
             print("COMMITTED", rid, STATE["requests"][rid]["item"]["title"], "images:", STATE["requests"][rid]["images"],
-                  "campaign:", STATE["requests"][rid]["item"].get("campaignCode"), flush=True)
+                  "campaign:", STATE["requests"][rid]["item"].get("campaignCode"),
+                  "ends:", STATE["requests"][rid]["item"].get("customEndDate"), "duration:", STATE["requests"][rid]["item"].get("duration"),
+                  "bidders:", STATE["requests"][rid]["item"].get("acceptedBidderId"),
+                  "shipping:", json.dumps(STATE["requests"][rid]["item"].get("shippingOptions")), flush=True)
             return self._send()
         self._send({}, 404)
 

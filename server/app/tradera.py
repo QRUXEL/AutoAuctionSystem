@@ -6,6 +6,7 @@ talks to Tradera when someone presses Publish.
 """
 import base64
 import json
+import re
 import time
 
 import requests
@@ -34,7 +35,16 @@ def _call(s, method, path, **kw):
     return r.json() if r.content else None
 
 
-def build_payload(item: dict, settings: dict, video_url: str | None = None) -> dict:
+def item_shipping(item: dict, settings: dict) -> list:
+    if item.get("shipping_override"):
+        try:
+            return json.loads(item["shipping_override"])
+        except ValueError:
+            pass
+    return settings["shipping_options"]
+
+
+def build_payload(item: dict, settings: dict, video_url: str | None = None, end_at: float | None = None) -> dict:
     from .videos import fill_tags
     description = item["description"]
     if settings.get("description_footer"):
@@ -48,12 +58,16 @@ def build_payload(item: dict, settings: dict, video_url: str | None = None) -> d
         "duration": item.get("duration_days") or settings["duration_days"],
         "restarts": settings["restarts"],
         "startPrice": item.get("start_price") or settings["start_price"],
-        "acceptedBidderId": settings["accepted_bidder_id"],
-        "shippingOptions": settings["shipping_options"],
-        "shippingCondition": settings["shipping_condition"],
+        "acceptedBidderId": item["accepted_bidder_override"] if item.get("accepted_bidder_override") else settings["accepted_bidder_id"],
+        "shippingOptions": None, "shippingCondition": None,     # filled in below
         "ownReferences": [f"station-{item['id']}"],
         "autoCommit": False,
     }
+    payload["shippingOptions"], payload["shippingCondition"] = tradera_shipping(item_shipping(item, settings), settings["shipping_condition"])
+    if end_at and payload["itemType"] == 1:          # an exact end; Tradera ignores it for fixed price
+        from . import schedule
+        payload["customEndDate"] = schedule.to_tradera(end_at)
+        payload["duration"] = schedule.duration_for(end_at)
     if item.get("buy_now_price"):
         payload["buyItNowPrice"] = item["buy_now_price"]
     if settings.get("vat") is not None:
@@ -185,10 +199,11 @@ def _wait(s, request_id: int, until: set, seconds: int) -> dict | None:
     return None
 
 
-def send(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
+def send(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None,
+         end_at: float | None = None) -> dict:
     """Creates the listing with autoCommit off and uploads the images. Nothing is live until commit()."""
     s = _session()
-    payload = build_payload(item, settings, video_url)
+    payload = build_payload(item, settings, video_url, end_at)
     if payload.get("campaignCode"):
         check = validate_campaign(payload["campaignCode"], payload["categoryId"])
         if not check["ok"]:
@@ -216,11 +231,92 @@ def commit(request_id: int) -> None:
         raise TraderaError(f"Tradera did not confirm request {request_id} within two minutes; check the account before retrying")
 
 
-def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None) -> dict:
+def publish(item: dict, image_paths: list, settings: dict, log=lambda m: None, video_url: str | None = None,
+            end_at: float | None = None) -> dict:
     """Send and commit in one go."""
-    sent = send(item, image_paths, settings, log, video_url)
+    sent = send(item, image_paths, settings, log, video_url, end_at)
     commit(sent["request_id"])
     return sent
+
+
+# ---- reference data (cached for a day) -----------------------------------------------
+def _cached(name: str, fetch, user: bool = False):
+    cache = config.DATA / f"reference-{name}.json"
+    if cache.exists() and time.time() - cache.stat().st_mtime < 86400:
+        return json.loads(cache.read_text("utf-8"))
+    try:
+        data = fetch(_session(user=user))
+    except Exception:
+        if cache.exists():                       # stale is better than nothing
+            return json.loads(cache.read_text("utf-8"))
+        raise
+    cache.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+    return data
+
+
+def shipping_products(from_country: str = "SE") -> list:
+    """Every shipping product Tradera offers from the country, flattened:
+    {key, providerId, provider, productId, name, weight, price, toCountry}."""
+    def fetch(s):
+        raw = _call(s, "GET", "/v4/reference-data/shipping-options", params={"fromCountryCodes": from_country}) or {}
+        out, seen = [], set()
+        for span in raw.get("productsPerWeightSpan") or []:
+            for p in span.get("products") or []:
+                key = f"{p.get('shippingProviderId')}:{p.get('id')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"key": key, "providerId": p.get("shippingProviderId"), "provider": p.get("shippingProvider") or "",
+                            "productId": p.get("id"), "name": p.get("name") or "", "weight": p.get("weight") or span.get("weight"),
+                            "price": p.get("price"), "toCountry": p.get("toCountry") or ""})
+        out.sort(key=lambda p: (p["provider"].lower(), p["weight"] or 0, p["price"] or 0))
+        return out
+    return _cached(f"shipping-{from_country}", fetch, user=True)
+
+
+PICKUP = re.compile(r"h[äa]mt|pick.?up|avh[äa]mt|upph[äa]mt|collect", re.IGNORECASE)
+
+
+def field_values() -> dict:
+    return _cached("item-field-values", lambda s: _call(s, "GET", "/v4/reference-data/item-field-values") or {})
+
+
+def pickup_provider_id() -> int | None:
+    """Tradera's id for 'buyer collects', if any of its lists has one (the API docs don't say how pickup works)."""
+    try:
+        for p in shipping_products():
+            if PICKUP.search(f"{p['provider']} {p['name']}"):
+                return p["providerId"]
+    except Exception:
+        pass
+    try:
+        for t in field_values().get("shippingTypes") or []:
+            if PICKUP.search(t.get("description") or ""):
+                return t.get("id")
+    except Exception:
+        pass
+    return None
+
+
+def tradera_shipping(options: list, condition: str) -> tuple[list, str]:
+    """Turns our options into Tradera's: a {"pickup": true, "place": ...} entry becomes Tradera's pickup option
+    (when it has one) and a line in the shipping note, so buyers always see it."""
+    real, notes = [], [condition.strip()] if condition and condition.strip() else []
+    for o in options:
+        if o.get("pickup"):
+            pid = pickup_provider_id()
+            if pid is not None:
+                real.append({"shippingProviderId": pid, "cost": 0})
+            place = (o.get("place") or "").strip()
+            notes.append(f"Kan hämtas hos oss{(' i ' + place) if place else ''}.")
+        else:
+            real.append({k: v for k, v in o.items() if k in ("shippingProviderId", "shippingProductId", "cost", "shippingWeight")})
+    return real, " ".join(notes)
+
+
+def bidder_types() -> list:
+    """[{id, description}] - who may bid: Sweden, EU, international."""
+    return _cached("bidder-types", lambda s: _call(s, "GET", "/v4/reference-data/accepted-bidder-types") or [])
 
 
 # ---- categories -----------------------------------------------------------

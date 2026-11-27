@@ -50,7 +50,11 @@ MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''",   # videohost.py: what 
                         "tradera_pending_item_id": "INTEGER",  # item id of a request sent but not committed
                         "tradera_sent_sig": "TEXT DEFAULT ''", # fingerprint of what was sent, to catch edits before Go live
                         "sent_at": "REAL",
-                        "manual_order": "INTEGER DEFAULT 0"},  # photos put in order by hand: keep it when files are added
+                        "manual_order": "INTEGER DEFAULT 0",
+                        "end_at": "TEXT DEFAULT ''",          # this item's own end time (local), overrides Settings
+                        "listing_end_at": "REAL",             # the end time it was sent with (schedule.py)
+                        "shipping_override": "TEXT DEFAULT ''",   # this item's shipping options as JSON, '' = Settings
+                        "accepted_bidder_override": "INTEGER"},   # this item's buyer region, NULL = Settings  # photos put in order by hand: keep it when files are added
               "files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera
                         "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)
