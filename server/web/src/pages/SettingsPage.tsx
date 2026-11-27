@@ -352,16 +352,16 @@ function changed<T extends object>(draft: T, saved: T): Partial<T> {
 }
 
 interface CampaignOption { code: string; ok: boolean; message: string; description: string }
-interface Charities { charities: { id: string; name: string }[]; source: 'tradera' | 'fallback'; error: string | null }
 
-/** Charity for every listing, from tradera.com's charity list. Its id is sent as the listing's campaign code,
- *  and Tradera is asked straight away whether it accepts it. */
+/** The Tradera campaign code sent with every listing (Musikhjälpen). Tradera's API can't list the codes, so a code is
+ *  checked with Tradera when it is entered, and likely codes can be tried. */
 function CampaignPicker({ value, onChange, traderaReady }: { value: string; onChange: (v: string) => void; traderaReady: boolean }) {
-  const { data: list, isLoading } = useQuery({ queryKey: ['charities'], queryFn: () => api<Charities>('/api/settings/charities'), staleTime: 600_000 });
   const [category, setCategory] = useState<{ id: number | null; path: string }>({ id: null, path: '' });
   const [result, setResult] = useState<CampaignOption | null>(null);
-  const [typed, setTyped] = useState('');
+  const [typed, setTyped] = useState(value);
   const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState<CampaignOption[] | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const check = async (code: string, cat = category.id) => {
     setResult(null);
@@ -372,9 +372,7 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
       setResult(r ?? null);
     } catch (e) { setResult({ code, ok: false, message: (e as Error).message, description: '' }); } finally { setBusy(false); }
   };
-  const choose = (code: string) => { onChange(code); void check(code); };
-  const [found, setFound] = useState<CampaignOption[] | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const use = (code: string) => { setTyped(code); onChange(code); void check(code); };
   const scan = async () => {
     setScanning(true);
     try {
@@ -382,53 +380,43 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
     } catch (e) { setFound([{ code: '', ok: false, message: (e as Error).message, description: '' }]); } finally { setScanning(false); }
   };
 
-  const charities = list?.charities ?? [];
-  const data = [
-    { value: '', label: 'None: ordinary auctions' },
-    ...charities.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` })),
-    ...(value && !charities.some((c) => c.id === value) ? [{ value, label: `Code ${value}` }] : []),
-  ];
-
   return (
     <Stack gap="xs">
-      <Select label="Charity for every listing" searchable data={data} value={value} allowDeselect={false}
-        rightSection={isLoading ? <Loader size="xs" /> : undefined} onChange={(v) => choose(v ?? '')}
-        description={value ? 'Its id is sent with every listing as the campaign code and checked against each item’s category before sending.'
-          : 'Listings are ordinary auctions.'} />
-      {list?.source === 'fallback' && (
-        <Text size="xs" c="yellow.5">{list.error} Showing the built-in entry (Musikhjälpen = 3164); other codes can be entered below.</Text>
-      )}
-      {!traderaReady && value && <Text size="xs" c="yellow.5">Connect Tradera to check that it accepts this code.</Text>}
-      {busy && <Group gap="xs"><Loader size="xs" /><Text size="xs" c="dimmed">Asking Tradera…</Text></Group>}
+      <Group align="flex-end" wrap="nowrap">
+        <TextInput style={{ flex: 1 }} label="Campaign code" placeholder="Empty: ordinary auctions" value={typed}
+          description="Sent with every listing so it counts for the campaign. Get it from Tradera or Radiohjälpen."
+          onChange={(e) => setTyped(e.currentTarget.value)} />
+        <Button variant="light" loading={busy} disabled={typed.trim() === value && !!result} onClick={() => use(typed.trim())}>
+          {typed.trim() ? 'Check and use' : 'Use none'}</Button>
+      </Group>
+      {!traderaReady && <Text size="xs" c="yellow.5">Connect Tradera to check codes.</Text>}
       {result && (
         <Alert color={result.ok ? 'green' : 'red'} variant="light" icon={result.ok ? <IconCheck size={16} /> : <IconX size={16} />}>
-          {result.ok ? `Tradera accepts ${result.code}: ${result.message}` : `${result.code}: ${result.message}`}
-          {!result.ok && ' Items are not sent while the code is rejected. Choose None to send ordinary auctions, or try the likely codes below.'}
+          {result.ok ? `Tradera accepts ${result.code}: ${result.message}` : `${result.code}: ${result.message}.`}
+          {!result.ok && ' Listings are not sent while the code is rejected. Clear it to send ordinary auctions.'}
         </Alert>
       )}
-      <Group gap="xs">
-        <Button size="xs" variant="light" loading={scanning} disabled={!traderaReady} onClick={scan}>Try likely Musikhjälpen codes</Button>
+      {!result && value && <Text size="xs" c="dimmed">Saved code: {value}. Press Check and use to ask Tradera about it.</Text>}
+      <Group gap="xs" align="center">
+        <Button size="xs" variant="subtle" loading={scanning} disabled={!traderaReady} onClick={scan}>Try likely Musikhjälpen codes</Button>
         {found && !found.some((f) => f.ok) && <Text size="xs" c="yellow.5">Tradera accepted none of: {found.map((f) => f.code).join(', ')}</Text>}
       </Group>
       {found?.filter((f) => f.ok).map((f) => (
         <Group key={f.code} gap="xs">
           <Badge color="green" variant="light">{f.code}</Badge>
           <Text size="sm">{f.description || f.message}</Text>
-          <Button size="compact-xs" onClick={() => { onChange(f.code); setResult(f); }}>Use</Button>
+          <Button size="compact-xs" onClick={() => { use(f.code); setResult(f); }}>Use</Button>
         </Group>
       ))}
-      <Group align="flex-end" wrap="nowrap" grow>
-        <TextInput label="Or use another code" placeholder="Code or charity id" value={typed} onChange={(e) => setTyped(e.currentTarget.value)}
-          rightSection={<Button size="compact-xs" variant="subtle" disabled={!typed.trim()} onClick={() => choose(typed.trim())}>Use</Button>}
-          rightSectionWidth={56} />
-        <div>
+      <Group align="flex-end" wrap="nowrap">
+        <div style={{ flex: 1 }}>
           <Text size="sm" fw={500} mb={4}>Check against category (optional)</Text>
-          <CategorySelect value={category} traderaReady={traderaReady}
-            onChange={(v) => { setCategory(v); if (value) void check(value, v.id); }} />
+          <CategorySelect value={category} traderaReady={traderaReady} onChange={(v) => { setCategory(v); if (value) void check(value, v.id); }} />
         </div>
       </Group>
       <Text size="xs" c="dimmed">
         Tradera may limit a campaign to some product categories. Without a category, the check uses the one your items use most.
+        The charity numbers on tradera.com (e.g. Musikhjälpen 3164) are not campaign codes; Tradera rejects them.
       </Text>
     </Stack>
   );

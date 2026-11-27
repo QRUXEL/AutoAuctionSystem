@@ -533,11 +533,6 @@ def campaign_check(body: dict):
         return {"ok": False, "message": str(exc)}
 
 
-@app.get("/api/settings/charities")
-def charity_list():
-    return tradera.charities()
-
-
 @app.post("/api/settings/campaign-codes")
 def campaign_codes(body: dict):
     """Tries likely campaign codes (and any typed) against a category; Tradera can't list them."""

@@ -89,15 +89,11 @@ options at 0 kr; **+ DSV sponsors** adds a line saying so to the shipping note.
 **Categories.** The AI picks the category from Tradera's own tree in two steps: first the section (e.g. *Hem & Hushåll > Porslin & Glas*),
 then the category inside it, with word matches added. If it can't decide, the item's notes say so and the category is left for you.
 
-**Charity auctions (Musikhjälpen):** the Settings page lists tradera.com's charities (read from
-`https://www.tradera.com/api/webclient/selling/charities`, which is not part of the documented API; if it can't be read, Musikhjälpen
-= 3164 is built in). The chosen charity's id is sent as the listing's `campaignCode`, and Tradera is asked right away whether it
-accepts it (against a category you pick, or the one your items use most). Any other code can be entered there too.
-Every listing is then created with `campaignCode`. Before creating it, the server asks Tradera
-(`POST /v4/listings/validate-campaign-code`) whether the code is valid for the item's category. If it isn't, nothing is created
-and the item shows why: code unknown, campaign not started or ended, category not allowed, code already used, or account not allowed.
-**Check code** on the Settings page runs the same check for a category you pick. Dry runs also check the code when Tradera is connected.
-With no code set, listings are ordinary auctions.
+**Charity auctions (Musikhjälpen):** set the Tradera campaign code on the Settings page; it is sent with every listing as
+`campaignCode`, and checked with Tradera when entered and before each listing (against the item's category). Tradera's API cannot
+list campaign codes; **Try likely Musikhjälpen codes** asks Tradera about a few guesses. The charity numbers on tradera.com
+(Musikhjälpen = 3164) are not campaign codes; Tradera rejects them. While a code is rejected, nothing is sent; clear it to send
+ordinary auctions.
 
 The Claude API key for descriptions is set on the Settings page too. Values saved there override the environment variables in Coolify.
 
