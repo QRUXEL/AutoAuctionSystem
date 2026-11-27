@@ -5,7 +5,7 @@ import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
   IconAdjustmentsHorizontal, IconAlertCircle, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
-  IconSparkles, IconTrash, IconCopy } from '@tabler/icons-react';
+  IconSparkles, IconTrash, IconCopy, IconHeartHandshake } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
@@ -14,6 +14,7 @@ import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
 import { PhotoGrid } from '../components/PhotoGrid';
+import { ManualListing } from '../components/ManualListing';
 import { AttributeFields, type Attributes } from '../components/AttributeFields';
 import { watchSend } from '../watchSend';
 import { BidderSelect, bidderName, ShippingPicker } from '../components/ShippingPicker';
@@ -65,6 +66,7 @@ export function ItemPage() {
   const [selected, setSelected] = useState(0);
   const [cropping, setCropping] = useState<Photo | null>(null);
   const [dupOpen, setDupOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [withdrawOriginal, setWithdrawOriginal] = useState(true);
   const [adjusting, setAdjusting] = useState<Photo | null>(null);
   const [confirm, setConfirm] = useState<null | 'publish' | 'golive' | 'delete' | 'rewrite'>(null);
@@ -386,10 +388,20 @@ export function ItemPage() {
                       : 'On Tradera but not published: nobody can see it or bid until you press Go live.'}
                   </Text>
                 )}
-                {info?.campaign_code ? (
-                  <Text size="xs" c="pink.4">Published as a charity auction (campaign code {info.campaign_code}). The code is checked against this category first.</Text>
+                {info?.charity?.id ? (
+                  <>
+                    <Button color="pink" leftSection={<IconHeartHandshake size={16} />} disabled={missing.length > 0} onClick={() => setManualOpen(true)}>
+                      List on tradera.com for {info.charity.name || 'the charity'}
+                    </Button>
+                    <Text size="xs" c="dimmed">
+                      Only Tradera's own sell form can donate a listing to a charity; this prepares everything for it.
+                      Send below makes an ordinary auction{info.campaign_code ? ` with campaign code ${info.campaign_code}` : ''}.
+                    </Text>
+                  </>
+                ) : info?.campaign_code ? (
+                  <Text size="xs" c="pink.4">Sent with campaign code {info.campaign_code}. The code is checked against this category first.</Text>
                 ) : (
-                  <Text size="xs" c="dimmed">No charity campaign code is set, so this becomes an ordinary auction.</Text>
+                  <Text size="xs" c="dimmed">No charity set, so Send makes an ordinary auction.</Text>
                 )}
                 <Group grow>
                   <Button variant="default" leftSection={<IconDeviceFloppy size={16} />} disabled={!dirty}
@@ -417,6 +429,8 @@ export function ItemPage() {
         </Grid.Col>
       </Grid>
 
+      {item && <ManualListing item={item} opened={manualOpen} onClose={() => setManualOpen(false)}
+        onDone={(updated) => { setManualOpen(false); refresh(updated); }} />}
       <Modal opened={dupOpen} onClose={() => setDupOpen(false)} title={`Duplicate ${item ? ref(item.id) : ''}`} centered>
         <Stack>
           <Text size="sm">

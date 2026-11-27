@@ -59,6 +59,7 @@ export interface Info {
   camera_offset: number | null;
   campaign_code: string;
   accepted_bidder_id: number;
+  charity: { id: number | null; name: string };
   video_host: string | null;
   video_site: { configured: boolean; base_url: string; warning: string; uploaded: number; failed: number; last_error: string | null };
 }
@@ -76,6 +77,8 @@ export interface Listing {
   shipping_options: { shippingProviderId?: number; shippingProductId?: number | null; cost?: number; shippingWeight?: number | null; pickup?: boolean; place?: string }[];
   description_footer: string;
   campaign_code: string;
+  charity_id: number | null;
+  charity_name: string;
   end_mode: 'duration' | 'fixed' | 'staggered';
   end_at: string;
   end_interval_min: number;

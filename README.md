@@ -192,6 +192,15 @@ it can be deleted or added back. A manual order is kept when photos are added; *
 ## Photo layout
 Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.
 
+## Listing for Musikhjälpen (charity donation)
+Tradera's API can't make a listing that donates to a charity: that only exists in tradera.com's own sell form (the
+"donera till insamling" choice, run with Pennybridge). Other Musikhjälpen listings either come from that form
+(`https://www.tradera.com/selling/new?charityId=3164`) or from Musikhjälpen's own seller account. So each item has
+**List on tradera.com for Musikhjälpen**: it opens that form with the charity chosen, offers the framed photos in order
+(zip or one by one) and every field ready to copy (title, description with the video link, category, Skick, price, end time,
+shipping), and takes the listing's link afterwards. The item then counts as published: the Auctions page follows its bids and
+the video page links to it. The charity (name and id) is set in Settings; 3164 is Musikhjälpen.
+
 ## Duplicating an item
 **Duplicate** on an item page makes a new item to review with the same photos (crops and adjustments kept, framed again with the new
 number), videos, text, category, Skick, prices, shipping and end time (unless it has passed). Use it to list something again, for

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hmac
+import io
 import json
 import logging
 import os
@@ -129,6 +130,7 @@ def info():
             "counts": counts, "loose": loose, "camera_offset": ingest.camera_offset(),
             "campaign_code": config.settings().get("campaign_code") or "",
             "accepted_bidder_id": config.settings().get("accepted_bidder_id"),
+            "charity": {"id": config.settings().get("charity_id"), "name": config.settings().get("charity_name") or ""},
             "video_host": videohost.BASE_URL if videohost.configured() else None, "video_site": videohost.summary()}
 
 
@@ -199,6 +201,96 @@ def regenerate(item_id: int, body: dict = Body(default={})):
     editable(get_item(item_id))
     ingest.reprocess(item_id, photos=bool(body.get("photos", True)), text=bool(body.get("text", True)))
     return {"ok": True}
+
+
+# ---- listing on tradera.com by hand (the only way to donate to a charity; the API has no charity field) ----
+@app.post("/api/items/{item_id}/manual-listing")
+async def manual_listing(item_id: int):
+    """Everything to fill in on tradera.com's sell form, with the charity preselected. Uploads the video first
+    so the description holds a working link."""
+    item = get_item(item_id)
+    if item["status"] not in ("review", "error", "sent"):
+        raise HTTPException(409, f"Item is {item['status']}")
+    try:
+        item, paths, settings, video_url = await asyncio.to_thread(_listing, item_id, True)
+    except Exception as exc:
+        raise HTTPException(409, str(exc))
+    end, how = schedule.resolve(item, settings)
+    payload = tradera.build_payload(item, settings, video_url, end)
+    attrs = []
+    try:
+        defs = {str(a["id"]): a for a in tradera.attribute_definitions(item["category_id"])} if item["category_id"] else {}
+        for aid, values in json.loads(item.get("attributes") or "{}").items():
+            if aid in defs and values:
+                attrs.append({"name": defs[aid]["name"], "value": ", ".join(map(str, values))})
+    except Exception:
+        pass
+    shipping = []
+    products = {}
+    try:
+        products = {(p["providerId"], p["productId"]): p for p in tradera.shipping_products()}
+    except Exception:
+        pass
+    for o in tradera.item_shipping(item, settings):
+        if o.get("pickup"):
+            shipping.append(f"Avhämtning{(' i ' + o['place']) if o.get('place') else ''}")
+        else:
+            p = products.get((o.get("shippingProviderId"), o.get("shippingProductId")))
+            name = (p["name"] if p["name"].lower().startswith(p["provider"].lower()) else f"{p['provider']} {p['name']}") if p \
+                else f"leverantör {o.get('shippingProviderId')}"
+            shipping.append(f"{name}: {o.get('cost') or 0} kr" + (" (gratis)" if not o.get("cost") else ""))
+    bidder = next((b["description"] for b in (tradera.bidder_types() if config.get("TRADERA_APP_ID") else [])
+                   if b["id"] == payload["acceptedBidderId"]), "")
+    charity_id = settings.get("charity_id")
+    return {
+        "sell_url": f"https://www.tradera.com/selling/new?charityId={charity_id}" if charity_id else "https://www.tradera.com/selling/new",
+        "charity": settings.get("charity_name") or "", "charity_id": charity_id,
+        "photos": len(paths), "photos_zip": f"/api/items/{item_id}/photos.zip",
+        "photo_urls": [f"/media/{p.relative_to(config.ITEMS)}" for p in paths],
+        "fields": [f for f in [
+            {"name": "Rubrik", "value": payload["title"]},
+            {"name": "Beskrivning", "value": payload["description"], "long": True},
+            {"name": "Kategori", "value": item["category_path"] or ""},
+            *attrs,
+            {"name": "Utropspris", "value": f"{payload['startPrice']} kr"},
+            {"name": "Köp nu-pris", "value": f"{payload['buyItNowPrice']} kr" if payload.get("buyItNowPrice") else ""},
+            {"name": "Sluttid", "value": f"{schedule.human(end)} ({schedule.to_local(end).replace('T', ' ')})" if end else f"{payload['duration']} dagar"},
+            {"name": "Frakt", "value": "\n".join(shipping), "long": len(shipping) > 1},
+            {"name": "Fraktvillkor", "value": payload.get("shippingCondition") or ""},
+            {"name": "Vem får buda", "value": bidder},
+        ] if f["value"]],
+    }
+
+
+@app.get("/api/items/{item_id}/photos.zip")
+def photos_zip(item_id: int):
+    """The framed photos in listing order (01-main.jpg first), for uploading on tradera.com."""
+    import zipfile
+    _, paths, _, _ = _listing(item_id, upload_video=False)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        for i, p in enumerate(paths, 1):
+            z.write(p, f"{i:02d}{'-huvudbild' if i == 1 else ''}.jpg")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="auktion-{item_id:04d}-bilder.zip"'})
+
+
+@app.post("/api/items/{item_id}/manual-listing/link")
+def manual_listing_link(item_id: int, body: dict):
+    """The listing made on tradera.com: its link (or item number). The item is then followed like any published one."""
+    import re as _re
+    item = get_item(item_id)
+    text = str(body.get("url") or "").strip()
+    m = _re.search(r"/item/(?:\d+/)?(\d{6,})", text) or _re.fullmatch(r"(\d{6,})", text)
+    if not m:
+        raise HTTPException(422, "Paste the listing's address from tradera.com, e.g. https://www.tradera.com/item/230901/762159181/…")
+    tid = int(m.group(1))
+    end, _ = schedule.resolve(item, config.settings())
+    db.update_item(item_id, status="published", published_at=db.now(), tradera_item_id=tid, listing_end_at=end,
+                   message=f"Listed by hand on tradera.com{' for ' + config.settings().get('charity_name') if config.settings().get('charity_name') else ''}.")
+    videohost.kick()           # the video page gets the Tradera link
+    bids.kick()                # starts following the bidding
+    return item_json(get_item(item_id))
 
 
 @app.post("/api/items/{item_id}/duplicate")

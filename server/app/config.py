@@ -66,6 +66,8 @@ DEFAULT_LISTING = {
     "end_mode": "duration",      # duration | fixed | staggered (see schedule.py)
     "end_at": "",                # local time, e.g. 2026-12-13T20:00: the fixed end, or the first end when staggered
     "end_interval_min": 2,       # staggered: minutes between one auction's end and the next
+    "charity_id": 3164,          # tradera.com's charity for listings made on the website (Musikhjälpen = 3164)
+    "charity_name": "Musikhjälpen",
 }
 
 _lock = threading.Lock()

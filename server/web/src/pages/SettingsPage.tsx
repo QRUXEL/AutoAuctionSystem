@@ -181,6 +181,17 @@ export function SettingsPage() {
       </Section>
 
       <Section title="Charity campaign (Musikhjälpen)">
+        <Text size="sm">
+          Tradera's API can't make a listing that donates to a charity; only the sell form on tradera.com can. Items get a
+          <b> List on tradera.com</b> button that opens that form with this charity chosen and has everything ready to copy.
+        </Text>
+        <Group grow align="flex-end">
+          <TextInput label="Charity on tradera.com" value={draft.listing.charity_name} placeholder="Musikhjälpen"
+            onChange={(e) => setListing('charity_name', e.currentTarget.value)} />
+          <NumberInput label="Its charity id" description="Musikhjälpen = 3164 (from tradera.com/selling/new?charityId=…)" min={0} allowDecimal={false}
+            value={draft.listing.charity_id ?? ''} onChange={(v) => setListing('charity_id', v === '' ? null : Number(v))} />
+        </Group>
+        <Text size="sm" fw={500} mt="sm">Campaign code (only for Send through the API)</Text>
         <CampaignPicker value={draft.listing.campaign_code} onChange={(v) => setListing('campaign_code', v)} traderaReady={!!info?.tradera_ready} />
       </Section>
 
