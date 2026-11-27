@@ -92,8 +92,9 @@ then the category inside it, with word matches added. If it can't decide, the it
 **Charity auctions (Musikhjälpen):** set the Tradera campaign code on the Settings page; it is sent with every listing as
 `campaignCode`, and checked with Tradera when entered and before each listing (against the item's category). Tradera's API cannot
 list campaign codes; **Try likely Musikhjälpen codes** asks Tradera about a few guesses. The charity numbers on tradera.com
-(Musikhjälpen = 3164) are not campaign codes; Tradera rejects them. While a code is rejected, nothing is sent; clear it to send
-ordinary auctions.
+(Musikhjälpen = 3164) are not campaign codes; Tradera rejects them. When the check rejects a code, Send still tries adding it to the pending listing (`POST /v4/listings/items/{requestId}/campaign-code`)
+and only goes on if Tradera accepts it there; **Test on Tradera** does the same on a hidden test listing that is never published.
+While a code is rejected both ways, nothing is sent; clear it to send ordinary auctions.
 
 The Claude API key for descriptions is set on the Settings page too. Values saved there override the environment variables in Coolify.
 
@@ -181,6 +182,13 @@ it can be deleted or added back. A manual order is kept when photos are added; *
 
 ## Photo layout
 Every length is a percentage of the photo's short side, and every logo, text or bar is pinned to a corner or edge of the photo, the whole image, or one of the margins. So one layout fits landscape, portrait and square photos alike. The output either keeps each photo's (cropped) shape or crops every photo to a fixed shape. Texts can use `{ref}` (item number) and `{date}`. The editor's previews are rendered by the same code as the real photos; **Re-frame unpublished items** applies a changed layout to items not yet published, keeping manual crops.
+
+## Following the bidding (Auctions page)
+Every published listing's Tradera id is stored, and the server reads it from Tradera (`GET /v4/items/{id}`) on a schedule that
+tightens towards the end: every 15 min, every 5 in the last day, every minute in the last hour, every 20 s in the last 10 minutes,
+and once more after the end for the winner. The **Auctions** page shows them in a table sortable by item, current bid, last bid,
+bidder/winner and time left, with the total of current bids. Tradera's API has no bid history, so "last bid" is when the server first
+saw the new highest bid; each change is also kept in the `bids` table.
 
 ## Items with several parts (Start item / Stop item)
 For a lot with several things, or anything shot by hand: press **Start item** in the top bar, shoot as many photos and videos as

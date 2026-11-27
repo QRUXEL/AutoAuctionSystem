@@ -1,12 +1,13 @@
 import { AppShell, Badge, Burger, Group, NavLink, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconFrame, IconPhotoQuestion, IconSettings, IconSparkles, IconClockPause } from '@tabler/icons-react';
+  IconAlertTriangle, IconChecklist, IconCloudUpload, IconInbox, IconLayoutGrid, IconFrame, IconPhotoQuestion, IconSettings, IconSparkles, IconClockPause, IconGavel } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { api, type Info, type Status } from './api';
 import { StationControl } from './components/StationControl';
+import { AuctionsPage } from './pages/AuctionsPage';
 import { ItemPage } from './pages/ItemPage';
 import { ItemsPage, VIEWS } from './pages/ItemsPage';
 import { LayoutPage } from './pages/LayoutPage';
@@ -65,6 +66,8 @@ export function App() {
             );
           })}
         </Stack>
+        <NavLink component={Link} to="/auctions" onClick={close} active={pathname === '/auctions'} label="Auctions"
+          leftSection={<IconGavel size={18} />} />
         <NavLink component={Link} to="/loose" onClick={close} active={pathname === '/loose'} label="Loose shots"
           leftSection={<IconPhotoQuestion size={18} />} mt="xs"
           rightSection={info?.loose ? <Badge size="sm" variant="light" color="gray">{info.loose}</Badge> : null} />
@@ -80,6 +83,7 @@ export function App() {
           <Route path="/" element={<Navigate to="/review" replace />} />
           {VIEWS.map((v) => <Route key={v.key} path={`/${v.key}`} element={<ItemsPage view={v} />} />)}
           <Route path="/items/:id" element={<ItemPage />} />
+          <Route path="/auctions" element={<AuctionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/loose" element={<LoosePage />} />
           <Route path="/layout" element={<LayoutPage />} />

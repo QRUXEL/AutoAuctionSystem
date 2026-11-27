@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos, videohost, schedule
+from . import config, db, describe, ftp, imaging, ingest, layout, station, tradera, videos, videohost, schedule, bids
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -30,6 +30,7 @@ async def lifespan(_app):
     ingest.start()
     videos.start()
     videohost.start()
+    bids.start()
     ftp.start()
     yield
 
@@ -295,6 +296,7 @@ def _listing(item_id: int, upload_video: bool):
 def _went_live(item_id: int, request_id: int, tradera_item_id):
     db.update_item(item_id, status="published", message="", published_at=db.now(),
                    tradera_request_id=request_id, tradera_item_id=tradera_item_id)
+    bids.kick()               # starts following the bidding
     videohost.kick()          # tells the video page which Tradera item it belongs to
 
 
@@ -489,6 +491,20 @@ def write_settings(body: dict = Body(...)):
     return read_settings()
 
 
+@app.get("/api/auctions")
+def auctions():
+    """Published listings with their bidding state, for the Auctions page."""
+    return {"auctions": bids.table(), "now": db.now()}
+
+
+@app.post("/api/auctions/refresh")
+def auctions_refresh():
+    if not config.tradera_ready():
+        raise HTTPException(409, "Connect Tradera first")
+    n = bids.refresh_all()
+    return {"checked": n, "auctions": bids.table(), "now": db.now()}
+
+
 @app.get("/api/tradera/shipping-options")
 def shipping_options(country: str = "SE"):
     if not config.tradera_ready():
@@ -531,6 +547,21 @@ def campaign_check(body: dict):
         return tradera.validate_campaign(code, int(body.get("category_id") or 0))
     except Exception as exc:
         return {"ok": False, "message": str(exc)}
+
+
+@app.post("/api/settings/campaign-trial")
+def campaign_trial(body: dict):
+    """Adds a code to a hidden, never-committed test listing via POST /v4/listings/items/{requestId}/campaign-code."""
+    if not config.tradera_ready():
+        raise HTTPException(409, "Connect Tradera first")
+    code = str(body.get("code") or "").strip()
+    category = body.get("category_id") or tradera.default_check_category()
+    if not code or not category:
+        raise HTTPException(422, "A code and a category are needed")
+    try:
+        return tradera.trial_campaign(code, int(category))
+    except Exception as exc:
+        return {"ok": False, "message": f"The test listing could not be created: {exc}"}
 
 
 @app.post("/api/settings/campaign-codes")

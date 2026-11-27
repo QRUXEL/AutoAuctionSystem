@@ -9,6 +9,14 @@ _conn = sqlite3.connect(DATA / "station.db", check_same_thread=False)
 _conn.row_factory = sqlite3.Row
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS bids (     -- each change of the highest bid seen on Tradera
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  at REAL NOT NULL,
+  amount INTEGER,
+  bidder TEXT,
+  total_bids INTEGER
+);
 CREATE TABLE IF NOT EXISTS items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   status TEXT NOT NULL,            -- capturing | processing | review | publishing | published | error
@@ -54,7 +62,11 @@ MIGRATIONS = {"items": {"video_host": "TEXT DEFAULT ''",   # videohost.py: what 
                         "end_at": "TEXT DEFAULT ''",          # this item's own end time (local), overrides Settings
                         "listing_end_at": "REAL",             # the end time it was sent with (schedule.py)
                         "shipping_override": "TEXT DEFAULT ''",   # this item's shipping options as JSON, '' = Settings
-                        "accepted_bidder_override": "INTEGER"},   # this item's buyer region, NULL = Settings  # photos put in order by hand: keep it when files are added
+                        "accepted_bidder_override": "INTEGER",    # this item's buyer region, NULL = Settings
+                        # bidding on Tradera (bids.py)
+                        "tr_bid": "INTEGER", "tr_bids": "INTEGER DEFAULT 0", "tr_next_bid": "INTEGER", "tr_bidder": "TEXT DEFAULT ''",
+                        "tr_winner": "TEXT DEFAULT ''", "tr_end": "REAL", "tr_ended": "INTEGER DEFAULT 0", "tr_link": "TEXT DEFAULT ''",
+                        "tr_thumb": "TEXT DEFAULT ''", "tr_checked_at": "REAL", "tr_last_bid_at": "REAL", "tr_error": "TEXT DEFAULT ''"},  # photos put in order by hand: keep it when files are added
               "files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera
                         "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)

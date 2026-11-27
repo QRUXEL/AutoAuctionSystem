@@ -123,6 +123,27 @@ def find_campaigns(category_id: int, extra: list | None = None, only: bool = Fal
     return out
 
 
+def trial_campaign(code: str, category_id: int) -> dict:
+    """Tries a code the way a listing would get it, without publishing anything: creates a hidden test
+    listing (autoCommit off, never committed), adds the code with POST .../{requestId}/campaign-code, and
+    reports Tradera's answer and the request's state. The test listing is left uncommitted."""
+    s = _session()
+    queued = _call(s, "POST", "/v4/listings/items", json={
+        "title": "Test av kampanjkod - publiceras inte", "description": "Test från auktionsstationen. Publiceras inte.",
+        "categoryId": int(category_id), "itemType": 1, "duration": 7, "startPrice": 1000, "acceptedBidderId": 1,
+        "shippingOptions": [], "autoCommit": False}, headers={"Idempotency-Key": f"campaign-trial-{int(time.time())}"})
+    rid = queued["requestId"]
+    try:
+        _call(s, "POST", f"/v4/listings/items/{rid}/campaign-code", json={"campaignCode": code.strip()})
+        added = {"ok": True, "message": "Tradera accepted the code on the test listing (HTTP 200)"}
+    except TraderaError as exc:
+        added = {"ok": False, "message": f"Tradera refused it: {exc}"}
+    results = _call(s, "GET", "/v4/listings/request-results", params={"requestIds": rid}) or []
+    state = results[0] if results else {}
+    return {**added, "request_id": rid, "result_code": state.get("resultCode"), "result_message": state.get("message"),
+            "note": "The test listing was never committed, so nothing was published."}
+
+
 def validate_campaign(code: str, category_id: int) -> dict:
     """POST /v4/listings/validate-campaign-code. Returns {ok, message, raw}."""
     raw = _call(_session(), "POST", "/v4/listings/validate-campaign-code",
@@ -165,15 +186,28 @@ def send(item: dict, image_paths: list, settings: dict, log=lambda m: None, vide
     """Creates the listing with autoCommit off and uploads the images. Nothing is live until commit()."""
     s = _session()
     payload = build_payload(item, settings, video_url, end_at)
+    attach_later = None
     if payload.get("campaignCode"):
         check = validate_campaign(payload["campaignCode"], payload["categoryId"])
-        if not check["ok"]:
-            raise TraderaError(check["message"])
-        log(f"campaign code ok: {check['message']}")
+        if check["ok"]:
+            log(f"campaign code ok: {check['message']}")
+        else:
+            # The check said no; the code may still be accepted on the pending listing
+            # (POST .../{requestId}/campaign-code). Nothing is committed unless that works.
+            attach_later = payload.pop("campaignCode")
+            log(f"campaign code check: {check['message']}; trying to add it to the pending listing instead")
     key = f"auction-station-{item['id']}-{item['publish_attempts']}"
     queued = _call(s, "POST", "/v4/listings/items", json=payload, headers={"Idempotency-Key": key})
     request_id, item_id = queued["requestId"], queued.get("itemId")
     log(f"request {request_id} created")
+    if attach_later:
+        try:
+            _call(s, "POST", f"/v4/listings/items/{request_id}/campaign-code", json={"campaignCode": attach_later})
+            log("campaign code added to the pending listing")
+        except TraderaError as exc:
+            raise TraderaError(f"Tradera rejected the campaign code {attach_later} both when checking it and when adding it "
+                               f"to the listing ({exc}). Nothing was published.") from exc
+        payload["campaignCode"] = attach_later
     for path in image_paths:
         body = {"imageData": base64.b64encode(path.read_bytes()).decode(), "imageFormat": 1, "hasMega": True}
         _call(s, "POST", f"/v4/listings/items/{request_id}/images", json=body)

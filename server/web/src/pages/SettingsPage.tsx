@@ -373,6 +373,14 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
     } catch (e) { setResult({ code, ok: false, message: (e as Error).message, description: '' }); } finally { setBusy(false); }
   };
   const use = (code: string) => { setTyped(code); onChange(code); void check(code); };
+  const [trialResult, setTrialResult] = useState<{ ok: boolean; message: string; result_code?: number | null; result_message?: string | null; note?: string } | null>(null);
+  const [trialBusy, setTrialBusy] = useState(false);
+  const trial = async () => {
+    setTrialBusy(true); setTrialResult(null);
+    try {
+      setTrialResult(await api('/api/settings/campaign-trial', { method: 'POST', body: { code: typed.trim(), category_id: category.id } }));
+    } catch (e) { setTrialResult({ ok: false, message: (e as Error).message }); } finally { setTrialBusy(false); }
+  };
   const scan = async () => {
     setScanning(true);
     try {
@@ -399,8 +407,18 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
       {!result && value && <Text size="xs" c="dimmed">Saved code: {value}. Press Check and use to ask Tradera about it.</Text>}
       <Group gap="xs" align="center">
         <Button size="xs" variant="subtle" loading={scanning} disabled={!traderaReady} onClick={scan}>Try likely Musikhjälpen codes</Button>
+        <Tooltip label="Creates a hidden test listing that is never published, adds the code to it the other way Tradera offers (POST …/campaign-code), and shows Tradera's answer">
+          <Button size="xs" variant="subtle" color="grape" loading={trialBusy} disabled={!traderaReady || !typed.trim()} onClick={trial}>Test on Tradera</Button>
+        </Tooltip>
         {found && !found.some((f) => f.ok) && <Text size="xs" c="yellow.5">Tradera accepted none of: {found.map((f) => f.code).join(', ')}</Text>}
       </Group>
+      {trialResult && (
+        <Alert color={trialResult.ok ? 'green' : 'red'} variant="light" title={`Test listing with ${typed.trim()}`}>
+          {trialResult.message}
+          {trialResult.result_code != null && <> Request state: {trialResult.result_code}{trialResult.result_message ? ` (${trialResult.result_message})` : ''}.</>}
+          {trialResult.note && <Text size="xs" c="dimmed" mt={4}>{trialResult.note}</Text>}
+        </Alert>
+      )}
       {found?.filter((f) => f.ok).map((f) => (
         <Group key={f.code} gap="xs">
           <Badge color="green" variant="light">{f.code}</Badge>
