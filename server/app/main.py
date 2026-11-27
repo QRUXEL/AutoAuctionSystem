@@ -70,6 +70,7 @@ def item_json(item: dict) -> dict:
         "preview": f"/api/items/{item['id']}/photos/{f['seq']}/preview",
         "crop": json.loads(f["crop"] or f["crop_auto"] or "null"),
         "manual_crop": bool(f["crop"]),
+        "adjust": json.loads(f["adjust"]) if f["adjust"] else {"brightness": 0, "contrast": 0},
         "name": f["name"],
     } for f in files if f["kind"] == "photo"]
     item["videos"] = [{"seq": f["seq"], "url": f"/media/{f['raw']}", "name": f["name"]} for f in files if f["kind"] == "video"]
@@ -198,6 +199,35 @@ def reset_crop(item_id: int, seq: int):
     db.run("UPDATE files SET crop = '' WHERE id = ?", f["id"])
     ingest.frame_one(get_photo(item_id, seq))
     return item_json(get_item(item_id))
+
+
+@app.put("/api/items/{item_id}/photos/{seq}/adjust")
+def set_adjust(item_id: int, seq: int, body: dict = Body(...)):
+    """Brightness/contrast for one photo, or for all photos of the item with "all": true."""
+    item = get_item(item_id)
+    editable(item)
+    adj = layout.clean_adjust(body)
+    value = "" if not any(adj.values()) else json.dumps(adj)
+    targets = db.query("SELECT * FROM files WHERE item_id = ? AND kind = 'photo'", item_id) if body.get("all") \
+        else [get_photo(item_id, seq)]
+    cfg = imaging.frame_config()
+    for f in targets:
+        db.run("UPDATE files SET adjust = ? WHERE id = ?", value, f["id"])
+        ingest.frame_one({**f, "adjust": value}, cfg)
+    return item_json(get_item(item_id))
+
+
+@app.post("/api/items/{item_id}/photos/{seq}/adjust-preview")
+def adjust_preview(item_id: int, seq: int, body: dict = Body(...)):
+    """The framed photo with trial brightness/contrast, for the Adjust dialog. Nothing is saved."""
+    import io
+    f = get_photo(item_id, seq)
+    cfg = imaging.frame_config()
+    cfg = {**cfg, "canvas": {**cfg["canvas"], "long_side": 1000}}
+    photo, _ = imaging.cropped(config.ITEMS / f["raw"], cfg, json.loads(f["crop"]) if f["crop"] else None)
+    buf = io.BytesIO()
+    imaging.frame_image(photo, cfg, f"#{item_id:04d}", layout.clean_adjust(body)).save(buf, "JPEG", quality=85)
+    return Response(buf.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 def _publish(item_id: int):

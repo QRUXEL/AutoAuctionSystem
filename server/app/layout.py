@@ -38,6 +38,7 @@ DEFAULT = {
     "canvas": {"shape": "photo", "long_side": 1600, "background": "#ffffff"},
     "margins": {"top": 2.5, "right": 2.5, "bottom": 10, "left": 2.5, "color": "#1b1b3a"},
     "crop": {"auto": True, "padding": 12},
+    "adjust": {"brightness": 0, "contrast": 0},
     "elements": [
         {"id": "logo", "type": "image", "name": "Logo", "visible": True, "asset": "logo.png",
          "box": "photo", "anchor": "top-left", "x": 3, "y": 3, "height": 9, "opacity": 100},
@@ -127,6 +128,7 @@ def validate(raw: dict) -> dict:
         "margins": {side: _num(m.get(side), 0, 60, 0) for side in ("top", "right", "bottom", "left")}
         | {"color": _color(m.get("color"), d["margins"]["color"])},
         "crop": {"auto": bool(cr.get("auto", True)), "padding": _num(cr.get("padding"), 0, 60, 12)},
+        "adjust": clean_adjust(raw.get("adjust")),
         "elements": [],
     }
     for i, e in enumerate(raw.get("elements") or []):
@@ -160,6 +162,25 @@ def validate(raw: dict) -> dict:
             el["height"] = _num(e.get("height"), 0.5, 100, 10)
         out["elements"].append(el)
     return out
+
+
+def clean_adjust(raw) -> dict:
+    """Brightness and contrast in % (-100 to +100; 0 = unchanged)."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {k: round(_num(raw.get(k), -100, 100, 0)) for k in ("brightness", "contrast")}
+
+
+def apply_adjust(img: Image.Image, *adjustments: dict) -> Image.Image:
+    """Applies brightness/contrast adjustments one after another (layout default, then the photo's own)."""
+    from PIL import ImageEnhance
+    for adj in adjustments:
+        if not adj:
+            continue
+        if adj.get("brightness"):
+            img = ImageEnhance.Brightness(img).enhance(max(0.0, 1 + adj["brightness"] / 100))
+        if adj.get("contrast"):
+            img = ImageEnhance.Contrast(img).enhance(max(0.0, 1 + adj["contrast"] / 100))
+    return img
 
 
 # ---- assets (logos, graphics, fonts) ------------------------------------------------------

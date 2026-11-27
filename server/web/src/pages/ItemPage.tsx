@@ -5,7 +5,7 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
-  IconAlertCircle, IconArrowBackUp, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
+  IconAdjustmentsHorizontal, IconAlertCircle, IconArrowBackUp, IconArrowLeft, IconCrop, IconDeviceFloppy, IconExternalLink, IconInfoCircle, IconRefresh, IconSend,
   IconSparkles, IconTrash,
 } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,6 +15,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
+import { AdjustModal } from '../components/AdjustModal';
 import { CropModal } from '../components/CropModal';
 import { StatusBadge } from '../components/StatusBadge';
 
@@ -53,6 +54,7 @@ export function ItemPage() {
   const [dirty, setDirty] = useState(false);
   const [selected, setSelected] = useState(0);
   const [cropping, setCropping] = useState<Photo | null>(null);
+  const [adjusting, setAdjusting] = useState<Photo | null>(null);
   const [confirm, setConfirm] = useState<null | 'publish' | 'delete' | 'rewrite'>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -158,14 +160,23 @@ export function ItemPage() {
           <Stack gap="sm">
             <Paper withBorder p={4} radius="md">
               <AspectRatio ratio={1}>
-                {photo?.framed ? <Image src={photo.framed} radius="sm" alt="" /> : <Center bg="dark.6"><Text c="dimmed">No photo yet</Text></Center>}
+                {photo?.framed
+                  ? <Center bg="dark.8"><Image src={photo.framed} radius="sm" fit="contain" h="100%" w="100%" alt="" /></Center>
+                  : <Center bg="dark.6"><Text c="dimmed">No photo yet</Text></Center>}
               </AspectRatio>
             </Paper>
             {photo && (
               <Group justify="space-between">
                 <Group gap="xs">
                   <Button size="xs" leftSection={<IconCrop size={14} />} onClick={() => setCropping(photo)} disabled={locked}>Crop photo {photo.seq}</Button>
+                  <Button size="xs" variant="light" leftSection={<IconAdjustmentsHorizontal size={14} />} onClick={() => setAdjusting(photo)}
+                    disabled={locked}>Adjust</Button>
                   <Badge variant="light" color={photo.manual_crop ? 'violet' : 'gray'}>{photo.manual_crop ? 'Your crop' : 'Automatic crop'}</Badge>
+                  {(photo.adjust.brightness !== 0 || photo.adjust.contrast !== 0) && (
+                    <Tooltip label={`Brightness ${photo.adjust.brightness > 0 ? '+' : ''}${photo.adjust.brightness}, contrast ${photo.adjust.contrast > 0 ? '+' : ''}${photo.adjust.contrast}`}>
+                      <Badge variant="light" color="orange">Adjusted</Badge>
+                    </Tooltip>
+                  )}
                 </Group>
                 <Group gap={4}>
                 <Tooltip label="Wrong photo? Moves it to Loose shots, where you can delete it or add it to another item">
@@ -186,7 +197,7 @@ export function ItemPage() {
                     borderRadius: 8, overflow: 'hidden', position: 'relative',
                     outline: i === selected ? '2px solid var(--mantine-primary-color-filled)' : '1px solid var(--mantine-color-dark-4)',
                   }}>
-                    {p.framed && <Image src={p.framed} w={84} h={84} fit="cover" alt="" />}
+                    {p.framed && <Image src={p.framed} w={84} h={84} fit="contain" bg="dark.8" alt="" />}
                     {p.manual_crop && <IconCrop size={14} style={{ position: 'absolute', right: 4, top: 4, color: 'white' }} />}
                   </Box>
                 </UnstyledButton>
@@ -254,6 +265,16 @@ export function ItemPage() {
           </Stack>
         </Grid.Col>
       </Grid>
+
+      <AdjustModal
+        itemId={id}
+        photo={adjusting}
+        count={item.photos.length}
+        onClose={() => setAdjusting(null)}
+        onSave={async (adjust, all) => {
+          refresh(await api<Item>(`/api/items/${id}/photos/${adjusting!.seq}/adjust`, { method: 'PUT', body: { ...adjust, all } }));
+        }}
+      />
 
       <CropModal
         photo={cropping}

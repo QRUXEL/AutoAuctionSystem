@@ -123,11 +123,17 @@ def preview(path: Path, out: Path, size: int = 2000) -> Path:
     return out
 
 
-def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = None, manual: dict | None = None):
+def frame_image(photo: Image.Image, cfg: dict, item_ref: str = "", adjust: dict | None = None) -> Image.Image:
+    """Cropped photo -> adjusted (layout default, then the photo's own) -> framed."""
+    return layout.render(layout.apply_adjust(photo, cfg.get("adjust"), adjust), cfg, {"ref": item_ref})
+
+
+def frame_photo(path: Path, out: Path, item_ref: str = "", cfg: dict | None = None, manual: dict | None = None,
+                adjust: dict | None = None):
     """Writes the framed photo. Returns the crop used as fractions (None if the photo was not cropped)."""
     cfg = cfg or frame_config()
     photo, used = cropped(path, cfg, manual)
-    framed = layout.render(photo, cfg, {"ref": item_ref})
+    framed = frame_image(photo, cfg, item_ref, adjust)
     out.parent.mkdir(parents=True, exist_ok=True)
     framed.save(out, "JPEG", quality=90, optimize=True)
     return used
@@ -147,7 +153,7 @@ def layout_preview(layout_cfg: dict, source: Path | None, test_aspect: float | N
     cfg = {**layout_cfg, "canvas": {**layout_cfg["canvas"], "long_side": long_side}}
     photo, _ = crop_image(img, cfg)
     buf = io.BytesIO()
-    layout.render(photo, cfg, {"ref": "#0123"}).save(buf, "JPEG", quality=82)
+    frame_image(photo, cfg, "#0123").save(buf, "JPEG", quality=82)
     return buf.getvalue()
 
 

@@ -9,6 +9,7 @@ export interface Photo {
   preview: string;
   crop: Crop | null;
   manual_crop: boolean;
+  adjust: { brightness: number; contrast: number };
   name: string;
 }
 

@@ -35,7 +35,7 @@ export function ItemsPage({ view }: { view: View }) {
             <Card key={item.id} component={Link} to={`/items/${item.id}`} padding="xs" withBorder>
               <Card.Section>
                 <AspectRatio ratio={1}>
-                  {cover ? <Image src={cover} alt="" /> : <Center bg="dark.6"><IconPhoto size={40} opacity={0.3} /></Center>}
+                  {cover ? <Center bg="dark.8"><Image src={cover} fit="contain" h="100%" w="100%" alt="" /></Center> : <Center bg="dark.6"><IconPhoto size={40} opacity={0.3} /></Center>}
                 </AspectRatio>
               </Card.Section>
               <Group justify="space-between" mt="xs" gap={4} wrap="nowrap">

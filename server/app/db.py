@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS files (
 MIGRATIONS = {"files": {"crop": "TEXT DEFAULT ''", "crop_auto": "TEXT DEFAULT ''",
                         "name": "TEXT DEFAULT ''",       # file name from the camera
                         "cam_time": "REAL",              # shot time on the camera's clock (see shottime.py)
-                        "shot_at": "REAL"}}              # shot time converted to the server's clock
+                        "shot_at": "REAL",               # shot time converted to the server's clock
+                        "adjust": "TEXT DEFAULT ''"}}    # per-photo brightness/contrast as JSON
 
 
 def init():

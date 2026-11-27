@@ -110,7 +110,7 @@ def _place(file_id: int, item_id: int):
     dest.parent.mkdir(parents=True, exist_ok=True)
     if f["raw"] != rel:
         shutil.move(str(config.ITEMS / f["raw"]), dest)
-    db.run("UPDATE files SET item_id = ?, seq = ?, raw = ?, framed = '', crop = '', crop_auto = '' WHERE id = ?",
+    db.run("UPDATE files SET item_id = ?, seq = ?, raw = ?, framed = '', crop = '', crop_auto = '', adjust = '' WHERE id = ?",
            item_id, seq, rel, file_id)
     return seq
 
@@ -244,7 +244,9 @@ def frame_one(f: dict, cfg: dict | None = None):
     raw = config.ITEMS / f["raw"]
     framed_rel = f"{f['item_id']}/framed/{f['seq']:02d}.jpg"
     manual = json.loads(f["crop"]) if f.get("crop") else None
-    used = imaging.frame_photo(raw, config.ITEMS / framed_rel, item_ref=f"#{f['item_id']:04d}", cfg=cfg, manual=manual)
+    adjust = json.loads(f["adjust"]) if f.get("adjust") else None
+    used = imaging.frame_photo(raw, config.ITEMS / framed_rel, item_ref=f"#{f['item_id']:04d}", cfg=cfg, manual=manual,
+                               adjust=adjust)
     db.run("UPDATE files SET framed = ?, crop_auto = ? WHERE id = ?", framed_rel,
            "" if manual or used is None else json.dumps(used), f["id"])
 

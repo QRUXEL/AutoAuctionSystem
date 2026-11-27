@@ -25,6 +25,7 @@ interface Layout {
   canvas: { shape: string; long_side: number; background: string };
   margins: { top: number; right: number; bottom: number; left: number; color: string };
   crop: { auto: boolean; padding: number };
+  adjust: { brightness: number; contrast: number };
   elements: El[];
 }
 interface Asset { name: string; kind: 'image' | 'font'; size: number }
@@ -167,6 +168,19 @@ export function LayoutPage() {
                     onChange={(v) => update((l) => ({ ...l, crop: { ...l.crop, padding: v } }))} />
                 </Box>
               )}
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={5} mb={4}>Brightness and contrast for every photo</Title>
+              <Text size="xs" c="dimmed" mb="sm">Applied to the photo only. Single photos can be adjusted further on their item page.</Text>
+              {(['brightness', 'contrast'] as const).map((k) => (
+                <Group key={k} gap="sm" wrap="nowrap" mb="xs">
+                  <Text size="sm" w={80}>{k === 'brightness' ? 'Brightness' : 'Contrast'}</Text>
+                  <Slider style={{ flex: 1 }} min={-60} max={60} step={1} marks={[{ value: 0 }]} value={draft.adjust[k]}
+                    onChange={(v) => update((l) => ({ ...l, adjust: { ...l.adjust, [k]: v } }))} />
+                  <Text size="sm" w={40} ta="right" ff="monospace">{draft.adjust[k] > 0 ? `+${draft.adjust[k]}` : draft.adjust[k]}</Text>
+                </Group>
+              ))}
             </Paper>
 
             <Paper withBorder p="md">
