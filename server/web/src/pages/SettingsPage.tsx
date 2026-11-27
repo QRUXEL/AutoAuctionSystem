@@ -373,6 +373,14 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
     } catch (e) { setResult({ code, ok: false, message: (e as Error).message, description: '' }); } finally { setBusy(false); }
   };
   const choose = (code: string) => { onChange(code); void check(code); };
+  const [found, setFound] = useState<CampaignOption[] | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const scan = async () => {
+    setScanning(true);
+    try {
+      setFound(await api<CampaignOption[]>('/api/settings/campaign-codes', { method: 'POST', body: { codes: [], category_id: category.id } }));
+    } catch (e) { setFound([{ code: '', ok: false, message: (e as Error).message, description: '' }]); } finally { setScanning(false); }
+  };
 
   const charities = list?.charities ?? [];
   const data = [
@@ -395,8 +403,20 @@ function CampaignPicker({ value, onChange, traderaReady }: { value: string; onCh
       {result && (
         <Alert color={result.ok ? 'green' : 'red'} variant="light" icon={result.ok ? <IconCheck size={16} /> : <IconX size={16} />}>
           {result.ok ? `Tradera accepts ${result.code}: ${result.message}` : `${result.code}: ${result.message}`}
+          {!result.ok && ' Items are not sent while the code is rejected. Choose None to send ordinary auctions, or try the likely codes below.'}
         </Alert>
       )}
+      <Group gap="xs">
+        <Button size="xs" variant="light" loading={scanning} disabled={!traderaReady} onClick={scan}>Try likely Musikhjälpen codes</Button>
+        {found && !found.some((f) => f.ok) && <Text size="xs" c="yellow.5">Tradera accepted none of: {found.map((f) => f.code).join(', ')}</Text>}
+      </Group>
+      {found?.filter((f) => f.ok).map((f) => (
+        <Group key={f.code} gap="xs">
+          <Badge color="green" variant="light">{f.code}</Badge>
+          <Text size="sm">{f.description || f.message}</Text>
+          <Button size="compact-xs" onClick={() => { onChange(f.code); setResult(f); }}>Use</Button>
+        </Group>
+      ))}
       <Group align="flex-end" wrap="nowrap" grow>
         <TextInput label="Or use another code" placeholder="Code or charity id" value={typed} onChange={(e) => setTyped(e.currentTarget.value)}
           rightSection={<Button size="compact-xs" variant="subtle" disabled={!typed.trim()} onClick={() => choose(typed.trim())}>Use</Button>}

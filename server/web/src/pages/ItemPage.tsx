@@ -13,6 +13,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, type Crop, type Item, type Photo, ref } from '../api';
 import { useInfo } from '../App';
 import { CategorySelect } from '../components/CategorySelect';
+import { watchSend } from '../watchSend';
 import { BidderSelect, bidderName, ShippingPicker } from '../components/ShippingPicker';
 import { AdjustModal } from '../components/AdjustModal';
 import { CropModal } from '../components/CropModal';
@@ -107,8 +108,7 @@ export function ItemPage() {
     if (dirty) await save(true);
     await api(`/api/items/${id}/publish`, { method: 'POST' });
     refresh();
-    notifications.show({ color: 'green', message: info?.dry_run ? 'Dry run: the request is being saved, nothing is sent.'
-      : info?.auto_commit ? 'Publishing on Tradera…' : 'Sending to Tradera. It stays hidden until you press Go live.' });
+    watchSend(id, navigate);          // reports how it went, even after moving on to the next item
     const next = (await api<Item[]>('/api/items?status=review')).find((i) => i.id !== id);
     navigate(next && !info?.dry_run ? `/items/${next.id}` : info?.dry_run ? `/items/${id}` : '/review');
   });
@@ -116,7 +116,7 @@ export function ItemPage() {
     if (dirty) await save(true);
     await api(`/api/items/${id}/go-live`, { method: 'POST' });
     refresh();
-    notifications.show({ color: 'green', message: 'Going live on Tradera…' });
+    watchSend(id, navigate);
   });
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const reorder = async (order: number[] | null, select?: number) => {
